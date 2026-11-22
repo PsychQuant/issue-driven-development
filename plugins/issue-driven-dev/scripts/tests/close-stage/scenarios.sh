@@ -51,14 +51,20 @@ import json, re, sys, html
 path, login, head, base, verdict, rows, heading = sys.argv[1:8]
 reviewed = f"{base}..{head}" if base != "-" else head
 pairs = [r.split(":", 1) for r in rows.split(";") if r]
-md_rows = "".join(f"| {i} | LOW | {f} | codex | {c} |\n" for i, (c, f) in enumerate(pairs, 1))
-body = (f"{heading}\n\n6 / 6 reviewers completed\n\n### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n### 要求覆蓋率\n1 / 1 requirements addressed\n\n"
+import os
+sev = os.environ.get("SEV", "LOW")                      # #595: findings above LOW
+cover = os.environ.get("COVER", "1 / 1")
+revs = os.environ.get("REVIEWERS", "6 / 6")             # empty: no reviewers line at all
+rev_md = f"{revs} reviewers completed\n\n" if revs else ""
+rev_html = f"<p>{revs} reviewers completed</p>\n" if revs else ""
+md_rows = "".join(f"| {i} | {sev} | {f} | codex | {c} |\n" for i, (c, f) in enumerate(pairs, 1))
+body = (f"{heading}\n\n{rev_md}### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n### 要求覆蓋率\n{cover} requirements addressed\n\n"
         "### Findings（合併後）\n| # | Severity | Finding | Source | Action |\n|---|---|---|---|---|\n" + md_rows)
 strong = lambda t: re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html.escape(t, quote=False))
-html_rows = "".join(f"<tr><td>{i}</td><td>LOW</td><td>{html.escape(f)}</td><td>codex</td><td>{c}</td></tr>\n"
+html_rows = "".join(f"<tr><td>{i}</td><td>{sev}</td><td>{html.escape(f)}</td><td>codex</td><td>{c}</td></tr>\n"
                     for i, (c, f) in enumerate(pairs, 1))
-body_html = (f"<h2>{html.escape(heading.lstrip('# '))}</h2>\n<p>6 / 6 reviewers completed</p>\n<h3>Aggregate</h3>\n<p>{strong(verdict)}</p>\n"
-             f"<p><strong>Reviewed</strong>: <code>{reviewed}</code></p>\n<h3>要求覆蓋率</h3>\n<p>1 / 1 requirements addressed</p>\n"
+body_html = (f"<h2>{html.escape(heading.lstrip('# '))}</h2>\n{rev_html}<h3>Aggregate</h3>\n<p>{strong(verdict)}</p>\n"
+             f"<p><strong>Reviewed</strong>: <code>{reviewed}</code></p>\n<h3>要求覆蓋率</h3>\n<p>{cover} requirements addressed</p>\n"
              "<h3>Findings（合併後）</h3>\n"
              "<markdown-accessiblity-table><table><thead><tr><th>#</th><th>Severity</th><th>Finding</th><th>Source</th>"
              f"<th>Action</th></tr></thead><tbody>\n{html_rows}</tbody></table></markdown-accessiblity-table>\n")
@@ -91,14 +97,18 @@ pr_fixture() { # head-sha [title]
   echo '[{"name": "test", "bucket": "pass", "event": "pull_request"}]' > "$S/gh/checks-1.json"
 }
 
-init_state() { # path [requested-path] [review] [in-chain] [interaction]
-  local path="$1" req="${2:-$1}" review="${3:-no}" chain="${4:-no}" inter="${5:-unattended}"
+init_state() { # path [requested-path] [review] [in-chain] [interaction] [stop-mode]
+  local path="$1" req="${2:-$1}" review="${3:-no}" chain="${4:-no}" inter="${5:-unattended}" stop="${6:-none}"
   local branch=main; [ "$path" = PR ] && branch="idd/7-x"
   python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path "$path" --requested-path "$req" \
-    --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" >/dev/null
+    --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" --stop "$stop" >/dev/null
 }
 
-run_stage() { # → OUT, RC
+run_stage() { # → OUT, RC. Phase 4 always judges the round before the close stage (#595): run the gate first,
+  # unless the test is about a report Phase 4 never judged (NO_PREGATE=1).
+  if [ -z "${NO_PREGATE:-}" ] && [ -n "${SHA:-}" ]; then
+    IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" >/dev/null 2>&1
+  fi
   OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
 }
 
@@ -543,7 +553,9 @@ pr_scenario moved-during-ci; cat > "$S/gh/on-checks.sh" <<EOF
 cd "$WORK" && rm -rf mdc && git clone -q "$S/o/r.git" mdc && cd mdc && echo y > h.txt && git add h.txt && git -c user.name=t -c user.email=t@e commit -q -m other && git push -q origin main
 EOF
 run_stage; stop_case "the default branch moved during the CI wait (r4 #1)" "behind"
-pr_scenario slash; init_state PR; OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C/" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
+pr_scenario slash; init_state PR
+IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C/" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" >/dev/null 2>&1   # Phase 4 judged it
+OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C/" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
 merged_case "--cwd with a trailing slash (r4 #43)"
 pr_scenario crash; OUT=$(IDD_GH=/nonexistent/gh FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N 2>/dev/null); RC=$?
 assert_eq "gh missing: stopped, not a traceback" "stopped" "$(printf '%s' "$OUT" | field status)"
@@ -630,11 +642,11 @@ assert_exit "gate: gh missing is unparseable, not 'not clean'" 2 "$RC"
 python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha abc >/dev/null 2>&1; assert_exit "gate: a short sha is a usage error" 64 $?
 python3 "$CS" run --cwd "$C" --repo "not a repo" --issue $N >/dev/null 2>&1; assert_exit "run: a malformed repo is a usage error" 64 $?
 python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout nan >/dev/null 2>&1; assert_exit "run: a non-finite timeout is a usage error" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --in-chain no >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --in-chain no --stop none >/dev/null 2>&1
 assert_exit "init: a missing --review is a usage error, not 'no'" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review "" --in-chain no >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review "" --in-chain no --stop none >/dev/null 2>&1
 assert_exit "init: an empty --review (a lost variable) is a usage error" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path sideways --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path sideways --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --stop none >/dev/null 2>&1
 assert_exit "init: an unknown path is a usage error" 64 $?
 BEFORE=$(wc -l < "$S/gh/calls.log")
 IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" IDD_CLOSE_STAGE_TEST=0 PATH=/nonexistent python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" >/dev/null 2>&1
@@ -725,5 +737,355 @@ assert_eq "pr-check: a CODEOWNERS pushed after the clone was made is seen (the c
 new_scenario prc-nofetch; git -C "$C" remote set-url origin "$S/gone.git"; plain_pr; prc
 assert_eq "pr-check: the default branch cannot be fetched → ask" ask "$(printf '%s' "$PRC" | field status)"
 assert_grep "pr-check: the reason says the fetch failed" "could not fetch" "$(printf '%s' "$PRC" | field reason)"
+
+echo "close-stage: stop modes (#595)"
+# write_rounds mode interaction review "b,i,l;b,i,l" [last-gate-status] [attempts] [rejected-in-last-round]
+# — a run-state with a stop mode and rounds. Each round gets report id 100+k and a 40-hex sha; last_gate repeats the
+# newest round unless a status is given; attempts (one per commit the gate judged) default to one per round.
+write_rounds() {
+  mkdir -p "$C/.claude/.idd/state"
+  python3 - "$C/.claude/.idd/state/idd-all-run-7.json" "$@" <<'EOF'
+import json, sys, time
+path, mode, inter, review, spec = sys.argv[1:6]
+status = sys.argv[6] if len(sys.argv) > 6 else "not_clean"
+n_attempts = int(sys.argv[7]) if len(sys.argv) > 7 and sys.argv[7] else None
+rejected = int(sys.argv[8]) if len(sys.argv) > 8 else 0
+at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+rounds = []
+for k, triple in enumerate([t for t in spec.split(";") if t], 1):
+    b, i, l = (int(x) for x in triple.split(","))
+    rounds.append({"round": k, "sha": f"{k:040x}", "blocking": b, "in_scope": i, "low_in_scope": l,
+                   "rejected": rejected if k == len(spec.split(";")) else 0,
+                   "status": status if k == len(spec.split(";")) else "not_clean",
+                   "report_id": 100 + k, "at": at})
+st = {"repo": "o/r", "issue": 7, "path": "PR", "requested_path": "PR", "interaction": inter, "branch": "idd/7-x",
+      "default": "main", "review": review == "yes", "in_chain": False, "created_at": at,
+      "verify_stop": None if mode == "none" else mode, "rounds": rounds,
+      "attempts": [{"sha": f"{k:040x}", "at": at} for k in range(1, (n_attempts if n_attempts is not None else len(rounds)) + 1)],
+      "last_gate": {"status": status, "report_id": rounds[-1]["report_id"] if rounds else None,
+                    "sha": rounds[-1]["sha"] if rounds else None, "at": at}}
+json.dump(st, open(path, "w"))
+EOF
+}
+next_run() { NX=$(python3 "$CS" next --cwd "$C" --repo $REPO --issue $N 2>"$S/err"); RC=$?; }
+nx() { printf '%s' "$NX" | field "$1"; }
+rounds_len() { python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("rounds") or []))' "$C/.claude/.idd/state/idd-all-run-7.json"; }
+gate_run() { G=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")"); RC=$?; }
+
+# spec: early stops when the count stops falling and merges with no Blocking
+new_scenario stop-early-converges; write_rounds early unattended no "0,6,0;0,4,0;0,4,0"; next_run
+assert_eq "early 6,4,4: stop" stop "$(nx decision)"
+assert_eq "early 6,4,4: merge" True "$(nx merge)"
+assert_grep "early 6,4,4: the reason names 4 → 4" "4 → 4" "$(nx reason)"
+assert_exit "early 6,4,4: next decided" 0 "$RC"
+write_rounds early unattended no "0,6,0;0,4,0"; next_run
+assert_eq "early 6,4: the count fell, fix again" fix "$(nx decision)"
+write_rounds early unattended no "0,3,0"; next_run
+assert_eq "early round 1 with findings: fix" fix "$(nx decision)"
+write_rounds early unattended no "0,2,2"; next_run
+assert_eq "early: only LOW in-scope findings is nothing to fix → stop" stop "$(nx decision)"
+assert_eq "early: only LOW in-scope findings → merge" True "$(nx merge)"
+
+# spec: early stops with Blocking and does not merge
+new_scenario stop-early-blocking; write_rounds early unattended no "1,2,0;1,2,0"; next_run
+assert_eq "early 3,3 with 1 Blocking: stop" stop "$(nx decision)"
+assert_eq "early 3,3 with 1 Blocking: no merge" False "$(nx merge)"
+
+# spec: exhaustive-blocking reaches zero Blocking
+new_scenario stop-exb-zero; write_rounds exhaustive-blocking unattended no "2,0,0;1,0,0;0,3,0"; next_run
+assert_eq "exhaustive-blocking 2,1,0: stop" stop "$(nx decision)"
+assert_eq "exhaustive-blocking 2,1,0: merge with In-scope fix left" True "$(nx merge)"
+
+# spec: exhaustive-blocking stops when Blocking does not fall twice
+new_scenario stop-exb-stuck; write_rounds exhaustive-blocking unattended no "2,0,0;2,0,0"; next_run
+assert_eq "exhaustive-blocking 2,2: one round without progress, fix again" fix "$(nx decision)"
+write_rounds exhaustive-blocking unattended no "2,0,0;2,0,0;2,0,0"; next_run
+assert_eq "exhaustive-blocking 2,2,2: stop" stop "$(nx decision)"
+assert_eq "exhaustive-blocking 2,2,2: no merge" False "$(nx merge)"
+write_rounds exhaustive-blocking unattended no "3,0,0;2,0,0;2,0,0"; next_run
+assert_eq "exhaustive-blocking 3,2,2: only one round without progress, fix again" fix "$(nx decision)"
+
+# spec: exhaustive-all keeps going until nothing is left
+new_scenario stop-exall; write_rounds exhaustive-all unattended no "3,3,0;2,3,0;1,2,0;1,1,0;0,1,0;0,1,1"; next_run
+assert_eq "exhaustive-all round 6 with one LOW in-scope finding: fix" fix "$(nx decision)"
+write_rounds exhaustive-all unattended no "3,3,0;2,3,0;1,2,0;1,1,0;0,1,0;0,1,1;0,0,0"; next_run
+assert_eq "exhaustive-all round 7 at zero: stop" stop "$(nx decision)"
+assert_eq "exhaustive-all round 7 at zero: merge" True "$(nx merge)"
+write_rounds exhaustive-all unattended no "5,0,0;5,0,0;5,0,0;5,0,0"; next_run
+assert_eq "exhaustive-all has no round limit and no progress rule" fix "$(nx decision)"
+
+# spec: an attended run with a stop mode fixes on its own
+new_scenario stop-attended; write_rounds early attended no "1,0,0"; next_run
+assert_eq "attended early with 1 Blocking in round 1: fix" fix "$(nx decision)"
+
+# stop modes: what stops every mode, and runs that never merge
+new_scenario stop-edges; write_rounds exhaustive-all unattended no "1,0,0" unparseable; next_run
+assert_eq "an unparseable latest gate stops" stop "$(nx decision)"
+assert_eq "an unparseable latest gate does not merge" False "$(nx merge)"
+write_rounds early unattended yes "0,3,0"; next_run
+assert_eq "--review counts Blocking only: nothing to fix → stop" stop "$(nx decision)"
+assert_eq "--review never merges" False "$(nx merge)"
+rm -f "$C/.claude/.idd/state/idd-all-run-7.json"; next_run
+assert_exit "next without a run state cannot decide" 3 "$RC"
+assert_eq "next without a run state answers stop" stop "$(nx decision)"
+assert_eq "next without a run state does not merge" False "$(nx merge)"
+write_rounds none unattended no "0,3,0"; next_run
+assert_eq "no stop mode, unattended round 1: fix" fix "$(nx decision)"
+write_rounds none unattended no "0,3,0;0,2,0"; next_run
+assert_eq "no stop mode, unattended round 2: stop (two-round limit)" stop "$(nx decision)"
+write_rounds none attended no "0,3,0"; next_run
+assert_eq "no stop mode, attended round 1: stop" stop "$(nx decision)"
+write_rounds none unattended no "1,0,0" unparseable; next_run
+assert_eq "no stop mode, unparseable in round 1 of 2: rounds are left (Phase 4 reads the report itself)" fix "$(nx decision)"
+assert_eq "no stop mode, unparseable: the answer still carries the round limit" 2 "$(nx limit)"
+assert_eq "no stop mode, unparseable: and the round" 1 "$(nx round)"
+write_rounds none unattended no "0,3,0" unparseable 2; next_run
+assert_eq "no stop mode: a second attempt whose report was missing still counts → stop" stop "$(nx decision)"
+assert_eq "no stop mode: the missing report's attempt is round 2" 2 "$(nx round)"
+write_rounds none unattended no "1,0,0" not_clean "" 1; next_run
+assert_eq "no stop mode, round 1 with a Rejected finding: fix as before #595" fix "$(nx decision)"
+assert_eq "no stop mode, round 1 with a Rejected finding: the answer carries the limit" 2 "$(nx limit)"
+write_rounds none unattended no "0,0,0" clean 3; next_run
+assert_eq "no stop mode, a clean third round: no merge" False "$(nx merge)"
+write_rounds early unattended no "0,3,0" not_clean "" 1; next_run
+assert_eq "early, a round with a Rejected finding: stop" stop "$(nx decision)"
+assert_eq "early, a round with a Rejected finding: no merge" False "$(nx merge)"
+write_rounds early unattended no "0,6,0;0,4,0"; next_run
+assert_eq "next lists the to-fix count of each round" "6 4" "$(printf '%s' "$NX" | python3 -c 'import json,sys; print(" ".join(str(r["to_fix"]) for r in json.load(sys.stdin)["rounds"]))')"
+
+# spec: the same report read twice is one round
+pr_scenario stop-gate-rounds; init_state PR PR no no unattended early
+gate_run; gate_run
+assert_eq "gate: the same report read twice is one round" 1 "$(rounds_len)"
+assert_eq "gate: prints the round number" 1 "$(printf '%s' "$G" | field round)"
+verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; gate_run
+assert_eq "gate: a new report is a new round" 2 "$(rounds_len)"
+gate_run
+assert_eq "gate: reading round 2's report again keeps 2 rounds" 2 "$(rounds_len)"
+attempts_len() { python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("attempts") or []))' "$C/.claude/.idd/state/idd-all-run-7.json"; }
+assert_eq "gate: a new report on the same commit is a new attempt (a fix pass that made no commit counts)" 2 "$(attempts_len)"
+
+# spec: flag over config, and values outside the three (the init half; the skill resolves flag and config)
+new_scenario stop-init
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no >/dev/null 2>&1
+assert_exit "init: a missing --stop is a usage error" 64 $?
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --stop fast >/dev/null 2>&1
+assert_exit "init: --stop fast is a usage error" 64 $?
+  for m in none early exhaustive-blocking exhaustive-all; do   # indented: run_parallel.py starts a new scenario at a top-level for
+  python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --stop "$m" >/dev/null
+  assert_eq "init: --stop $m is recorded" "$([ "$m" = none ] && echo None || echo "$m")" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verify_stop", "<missing>"))' "$C/.claude/.idd/state/idd-all-run-7.json")"
+  done
+
+# spec: a stop-mode run merges a reviewed commit that is not clean
+new_scenario stop-merge-notclean; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 1 in-scope fix" "In-scope fix:a LOW leftover"
+init_state PR PR no no unattended early; gate_run; run_stage
+assert_eq "early, a FAIL round with nothing to fix: merged" merged "$(printf '%s' "$OUT" | field status)"
+assert_exit "early, a FAIL round with nothing to fix: exit" 0 "$RC"
+
+new_scenario stop-merge-nomode; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 1 in-scope fix" "In-scope fix:a LOW leftover"
+init_state PR; gate_run; run_stage
+stop_case "no stop mode, the same FAIL round" "verify gate"
+
+new_scenario stop-merge-blocking; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 1 blocking" "Blocking:a real problem"
+init_state PR PR no no unattended early; gate_run; run_stage
+stop_case "early, a round with Blocking" "stop mode early"
+
+new_scenario stop-merge-stale; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 1 in-scope fix" "In-scope fix:a LOW leftover"
+init_state PR PR no no unattended early; gate_run
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 1 in-scope fix" "In-scope fix:a LOW leftover"; NO_PREGATE=1 run_stage
+stop_case "early, a report the round record has not seen" "not the round"
+
+# two rounds of one PR: round 1 on the first commit, round 2 on a fix commit
+two_rounds() { # name mode "verdict1" "rows1" "verdict2" "rows2"
+  new_scenario "$1"; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+  init_state PR PR no no unattended "$2"
+  verify_comment me "$SHA" "$(base_of "$SHA")" "$3" "$4"; gate_run
+  work_commit "fix: address verify finding (#7)"; pr_fixture "$SHA"
+  verify_comment me "$SHA" "$(base_of "$SHA")" "$5" "$6"; gate_run
+}
+# spec: early stops when the count stops falling and merges with no Blocking (the run itself, findings above LOW)
+SEV=MEDIUM two_rounds stop-run-early-flat early "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"; run_stage
+assert_eq "early 2 → 2 with MEDIUM findings: the run merges the reviewed commit" merged "$(printf '%s' "$OUT" | field status)"
+assert_output_grep "early: the squash body names the stop mode" "after stop mode early" "$S/gh/calls.log"
+# spec: exhaustive-blocking reaches zero Blocking (the run itself)
+SEV=MEDIUM two_rounds stop-run-exb exhaustive-blocking "**FAIL** — 1 blocking, 3 in-scope fix" "Blocking:x;In-scope fix:a;In-scope fix:b;In-scope fix:c" \
+  "**FAIL** — 0 blocking, 3 in-scope fix" "In-scope fix:a;In-scope fix:b;In-scope fix:c"; run_stage
+assert_eq "exhaustive-blocking at 0 Blocking with 3 MEDIUM left: merged" merged "$(printf '%s' "$OUT" | field status)"
+# spec: a stop-mode merge passes the clean merge's coverage and reviewers checks
+COVER="3 / 5" SEV=MEDIUM two_rounds stop-run-cover early "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"; run_stage
+stop_case "early, coverage 3 / 5" "coverage line"
+REVIEWERS="" SEV=MEDIUM two_rounds stop-run-noreviewers early "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"; run_stage
+stop_case "early, no reviewers line" "reviewers line"
+# no stop mode: a report the round record never saw does not merge
+pr_scenario stop-nomode-unseen; gate_run; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; NO_PREGATE=1 run_stage
+stop_case "no stop mode, a newer report Phase 4 never judged" "never judged"
+# gate: a broken round record fails the gate closed
+pr_scenario stop-gate-broken; echo '{"repo": "o/r", "issue": 7, "rounds": "x"}' > "$C/.claude/.idd/state/idd-all-run-7.json"; gate_run
+assert_exit "gate: a round record that is not a list is unparseable" 2 "$RC"
+assert_eq "gate: … and says so" unparseable "$(printf '%s' "$G" | field status)"
+
+# spec (fix round 1): a result already answered with fix stops the loop
+new_scenario stop-fix-answered; write_rounds early unattended no "0,3,0"; next_run
+assert_eq "early round 1 with 3 to fix: fix" fix "$(nx decision)"
+next_run
+assert_eq "the same result asked again (no new report, no new commit): stop" stop "$(nx decision)"
+assert_eq "the same result asked again: no merge" False "$(nx merge)"
+assert_grep "the same result asked again: the reason says so" "no new report or commit" "$(nx reason)"
+write_rounds none unattended no "0,3,0"; next_run; next_run
+assert_eq "no stop mode: the same result asked again also stops" stop "$(nx decision)"
+# spec (fix round 1): a serious In-scope finding left unfixed is not merged
+SEV=HIGH two_rounds stop-run-high early "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"; run_stage
+stop_case "early, two HIGH In-scope fix findings left" "HIGH"
+# … and the close stage checks it itself: a round record without high_in_scope (next cannot see it) still stops
+SEV=HIGH two_rounds stop-run-high-cs early "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p))
+for r in st["rounds"]:
+    r.pop("high_in_scope", None)
+json.dump(st, open(p, "w"))
+PY
+NO_PREGATE=1 run_stage
+stop_case "early, HIGH In-scope fix left and not in the round record" "CRITICAL, HIGH, P0 or P1"
+# verify r2 #1: a stop-mode merge checks that the report it re-reads has the counts the round record holds
+SEV=MEDIUM two_rounds stop-run-counts exhaustive-all "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p)); st["rounds"][-1]["in_scope"] = 0; json.dump(st, open(p, "w"))
+PY
+NO_PREGATE=1 run_stage
+stop_case "exhaustive-all, a round record whose counts differ from the report" "does not match"
+# verify r2 #2: without a stop mode, a round with no report on the same commit is still a round
+new_scenario stop-nomode-noreport; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+init_state PR PR no no unattended none
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 1 blocking" "Blocking:x"; gate_run; next_run
+assert_eq "no stop mode, round 1 with a Blocking finding: fix" fix "$(nx decision)"
+# round 2's newest verify comment is a PR-mode pointer: the gate reads no report id (the same as a failed fetch)
+verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE" "" "## Verify (via PR #9) — round 2"; gate_run
+assert_eq "no stop mode: round 2 without a branch-mode report has no report id" "<missing>" "$(printf '%s' "$G" | field comment_id)"
+assert_eq "no stop mode: a second round with no report on the same commit is a second attempt" 2 "$(attempts_len)"
+next_run
+assert_eq "no stop mode: … and the two-round limit stops the loop" stop "$(nx decision)"
+# verify r2 #3: a result next answered with fix is not merged when it later reads clean
+new_scenario stop-nomode-laterclean; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+init_state PR PR no no unattended none
+verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"
+python3 - "$S/gh/comments.json" "$S/html.stash" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); open(sys.argv[2], "w").write(d[-1].pop("body_html")); json.dump(d, open(sys.argv[1], "w"))
+PY
+gate_run; next_run
+assert_eq "no stop mode, round 1 unreadable (no rendered HTML): fix" fix "$(nx decision)"
+python3 - "$S/gh/comments.json" "$S/html.stash" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d[-1]["body_html"] = open(sys.argv[2]).read(); json.dump(d, open(sys.argv[1], "w"))
+PY
+gate_run; next_run
+assert_eq "the same report read as clean after a fix answer: stop" stop "$(nx decision)"
+assert_eq "the same report read as clean after a fix answer: no merge" False "$(nx merge)"
+NO_PREGATE=1 run_stage
+stop_case "no stop mode, a clean report next already answered with fix" "fix answer"
+# verify r3 #1: Phase 5 reads the gate without writing the round record; a report Phase 4 never judged does not merge
+SEV=MEDIUM two_rounds stop-run-readonly early "**FAIL** — 1 blocking, 2 in-scope fix" "Blocking:x;In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 1 blocking, 2 in-scope fix" "Blocking:x;In-scope fix:c;In-scope fix:d"; next_run
+assert_eq "early 3 → 3 with a Blocking finding: stop" stop "$(nx decision)"
+SEV=MEDIUM verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:e;In-scope fix:f" "## Verify: #7 — round 3"
+G=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" --read-only yes); RC=$?
+assert_eq "gate --read-only: judges the newest report" not_clean "$(printf '%s' "$G" | field status)"
+assert_eq "gate --read-only: writes no round" 2 "$(rounds_len)"
+NX=$(python3 "$CS" next --cwd "$C" --repo $REPO --issue $N --read-only yes 2>"$S/err"); RC=$?
+assert_eq "next --read-only: Phase 4's answer stands" stop "$(nx decision)"
+NO_PREGATE=1 run_stage
+stop_case "early, a report posted after Phase 4 stopped" "not the round"
+# verify r3 #2: without a stop mode, a record with fewer attempts than rounds does not merge
+pr_scenario stop-nomode-noattempts; gate_run
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p)); last = st["rounds"][-1]
+st["rounds"] = [dict(last, round=1, report_id=-1), dict(last, round=2, report_id=-2), dict(last, round=3)]
+st.pop("attempts"); json.dump(st, open(p, "w"))
+PY
+NO_PREGATE=1 run_stage
+stop_case "no stop mode, three rounds and no attempts recorded" "inconsistent"
+# verify r3 #3: before any gate result is recorded, next cannot decide
+new_scenario stop-nomode-nogate; init_state PR PR no no unattended none; next_run
+assert_eq "no stop mode, nothing recorded yet: stop" stop "$(nx decision)"
+assert_exit "no stop mode, nothing recorded yet: undecided" 3 "$RC"
+# spec (fix round 1): exhaustive-all with --review counts Blocking only
+new_scenario stop-exall-review; write_rounds exhaustive-all unattended yes "0,2,0"; next_run
+assert_eq "exhaustive-all --review, 0 Blocking: stop" stop "$(nx decision)"
+assert_eq "exhaustive-all --review: no merge" False "$(nx merge)"
+assert_grep "exhaustive-all --review: the reason says no Blocking" "no Blocking" "$(nx reason)"
+# spec (fix round 1): an empty round record does not merge
+pr_scenario stop-nomode-empty; NO_PREGATE=1 run_stage
+stop_case "no stop mode, an empty round record" "never judged"
+
+# spec (Clean verify leads to merge and close): a stop-mode run is not stopped by its own length
+age_state() { # created-hours-ago last-round-hours-ago
+  python3 - "$C/.claude/.idd/state/idd-all-run-7.json" "$1" "$2" <<'EOF'
+import json, sys, time
+path, created, last = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+st = json.load(open(path))
+fmt = lambda h: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - h * 3600))
+st["created_at"] = fmt(created)
+if st.get("rounds"):
+    st["rounds"][-1]["at"] = fmt(last)
+json.dump(st, open(path, "w"))
+EOF
+}
+pr_scenario stop-ttl-mode; init_state PR PR no no unattended exhaustive-all; gate_run; age_state 30 2; run_stage
+assert_eq "exhaustive-all, created 30 h ago, last round 2 h ago: merged" merged "$(printf '%s' "$OUT" | field status)"
+pr_scenario stop-ttl-old; init_state PR PR no no unattended exhaustive-all; gate_run; age_state 30 26; run_stage
+stop_case "exhaustive-all, last round 26 h ago" "older than 24 hours"
+pr_scenario stop-ttl-nomode; gate_run; age_state 30 2; run_stage
+stop_case "no stop mode, created 30 h ago" "older than 24 hours"
+
+# spec (Unattended fix loop … two-round limit): a third round is caught by the close stage
+pr_scenario stop-third-round; gate_run
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'EOF'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p)); last = st["rounds"][-1]
+st["rounds"] = [dict(last, round=1, report_id=-1), dict(last, round=2, report_id=-2), dict(last, round=3)]
+st["attempts"] = [{"sha": "1" * 40, "report_id": -1, "at": last["at"]}, {"sha": "2" * 40, "report_id": -2, "at": last["at"]},
+                  {"sha": last["sha"], "report_id": last["report_id"], "at": last["at"]}]
+json.dump(st, open(p, "w"))
+EOF
+assert_eq "no stop mode, 3 rounds: the record holds exactly 3 attempts (verify r4 #5)" 3 "$(attempts_len)"
+NO_PREGATE=1 run_stage
+assert_eq "no stop mode, 3 rounds: the close stage added no attempt" 3 "$(attempts_len)"
+stop_case "no stop mode, 3 rounds recorded" "2 verify rounds"
+# verify r4 #1: a gate result read for one run is not written into the run that replaced it
+pr_scenario stop-gate-replaced
+RR=$(python3 - "$CS" "$C" "$REPO" "$N" "$SHA" <<'PY'
+import importlib.util, json, sys
+cs, cwd, repo, n, sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+since = m.run_since(cwd, n)
+p = m.state_path(cwd, n); st = json.load(open(p)); st["created_at"] = "2099-01-01T00:00:00Z"; json.dump(st, open(p, "w"))
+try:
+    m.record_round(cwd, repo, n, {"status": "clean", "comment_id": 5, "blocking": 0, "in_scope": 0}, sha, since)
+    print("written", len(json.load(open(p)).get("rounds") or []))
+except m.Stop as exc:   # only the close stage's own refusal counts
+    print("refused", len(json.load(open(p)).get("rounds") or []), exc)
+PY
+)
+assert_grep "gate: a result read for a replaced run is refused" "refused 0" "$RR"
+# verify r5 #4: a run-state path the close stage refuses (a symlink) is an unparseable gate result, not a traceback
+pr_scenario stop-gate-symlink
+mv "$C/.claude/.idd/state/idd-all-run-7.json" "$S/real-state.json"
+ln -s "$S/real-state.json" "$C/.claude/.idd/state/idd-all-run-7.json"
+gate_run
+assert_exit "gate: a symlinked run state is unparseable (exit 2)" 2 "$RC"
+assert_eq "gate: … with a JSON answer" unparseable "$(printf '%s' "$G" | field status)"
 
 print_summary close-stage

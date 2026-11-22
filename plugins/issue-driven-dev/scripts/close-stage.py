@@ -12,7 +12,9 @@ state file and from GitHub here, never from the model's memory.
 Subcommands
   init  --cwd C --repo O/R --issue N --path PR|direct-commit --requested-path PR|direct-commit
         --interaction attended|unattended --branch B --default D --review yes|no --in-chain yes|no
-        Step 0.7: record the run's flags in C/.claude/.idd/state/idd-all-run-N.json.
+        --stop none|early|exhaustive-blocking|exhaustive-all
+        Step 0.7: record the run's flags in C/.claude/.idd/state/idd-all-run-N.json,
+        with the stop mode (#595) and an empty round record.
         Every value is required: a value lost between tool calls is a usage
         error (64), never a silent "no" (#392 verify r2 #3).
   gate  --cwd C --repo O/R --issue N --sha SHA [--base SHA]
@@ -20,9 +22,16 @@ Subcommands
         the run began, as GitHub renders it (body_html), and judge it with
         verify-gate.py --expect-sha [--expect-base]. The newest one must be a
         '## Verify: #N' report (a PR-mode report or pointer is not read here).
-        Prints the gate JSON plus comment_id / verify_url.
+        Prints the gate JSON plus comment_id / verify_url / round.
+        A report this run has not read yet is appended to the round record of the
+        run state (#595); reading the same report again adds nothing.
         Exit 0 clean, 1 not clean, 2 unparseable (including: no such report,
         any error), 64 usage.
+  next  --cwd C --repo O/R --issue N
+        After each verify round (#595): fix and verify again, or stop, and whether
+        the stop merges — from the run state's stop mode and round record only
+        (scripts/lib/stopmode.py). Prints one JSON line. Exit 0 decided, 3 could
+        not decide (no run state, no round): the answer is then stop, no merge.
   run   --cwd C --repo O/R --issue N [--ci-timeout S] [--ci-grace S]
         Phase 5c: every guardrail, then the squash merge (PR) or the push
         (direct-commit). The CI guardrail runs the local CI gate
@@ -75,6 +84,7 @@ from ghread import (CI_GATE_RESULTS, GH, GIT, SLEEP, TEST, Stop, gh_json, git, i
                     local_ci, now, gh_paginated, parse_iso, run_cmd, session_login, ts, first_line)
 from intent import (check_intent, check_issue_authors, check_meeting, check_others,  # noqa: E402
                     check_pr_people, issue_meta)
+from stopmode import MODES, answered_fix, decide, fix_key  # noqa: E402  scripts/lib/stopmode.py — when the fix loop stops (#595)
 
 WRITE_PERMS = {"WRITE", "MAINTAIN", "ADMIN"}
 STATE_TTL = 24 * 3600
@@ -145,7 +155,7 @@ def common_ok(a):
 
 def cmd_init(argv):
     keys = ["--cwd", "--repo", "--issue", "--path", "--requested-path", "--interaction", "--branch",
-            "--default", "--review", "--in-chain"]
+            "--default", "--review", "--in-chain", "--stop"]
     a = parse(argv, {k: "value" for k in keys})
     if a is None or not common_ok(a) or any(k not in a for k in keys):
         return usage("init needs every one of: " + " ".join(keys) + " (each with a value)")
@@ -155,6 +165,8 @@ def cmd_init(argv):
         return usage("--interaction must be attended or unattended")
     if a["--review"] not in ("yes", "no") or a["--in-chain"] not in ("yes", "no"):
         return usage("--review and --in-chain must be yes or no")
+    if a["--stop"] not in ("none",) + MODES:
+        return usage("--stop must be none, " + ", ".join(MODES))
     cwd = os.path.realpath(a["--cwd"])
     try:
         spath, rpath = state_path(cwd, a["--issue"]), result_path(cwd, a["--issue"])
@@ -166,11 +178,11 @@ def cmd_init(argv):
         "requested_path": a["--requested-path"], "interaction": a["--interaction"],
         "branch": a["--branch"], "default": a["--default"],
         "review": a["--review"] == "yes", "in_chain": a["--in-chain"] == "yes",
+        "verify_stop": None if a["--stop"] == "none" else a["--stop"], "rounds": [], "attempts": [], "last_gate": None,
         "created_at": iso(now()),
     }
     os.makedirs(os.path.dirname(spath), exist_ok=True)
-    with open(spath, "w", encoding="utf-8") as fh:
-        json.dump(state, fh)
+    write_state(cwd, a["--issue"], state)
     if os.path.exists(rpath):
         os.unlink(rpath)
     print(spath)
@@ -227,18 +239,19 @@ def judge_report(repo, n, sha, base, since):
                    "reason": f"the newest verify comment by this account{when} is '{other}', not a '## Verify: #{n}' report"}
     # A verdict changes only with a new verify round: a report edited after it was posted is not read (r5 #14),
     # nor one a maintainer hid as outdated or off-topic.
+    named = {"comment_id": report.get("id"), "verify_url": report.get("html_url")}
     if ts(report.get("updated_at")) != ts(report.get("created_at")):
-        return 2, {"status": "unparseable", "reason": "the verify report was edited after it was posted — run verify again"}
+        return 2, dict(named, status="unparseable", reason="the verify report was edited after it was posted — run verify again")
     if not report.get("node_id"):
-        return 2, {"status": "unparseable", "reason": "could not tell whether the verify report is hidden (no node id)"}
+        return 2, dict(named, status="unparseable", reason="could not tell whether the verify report is hidden (no node id)")
     q = "query($id:ID!){node(id:$id){... on IssueComment{isMinimized}}}"
     node = (gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"id={report['node_id']}"],
                     "whether the verify report is hidden").get("data") or {}).get("node") or {}
     if node.get("isMinimized"):
-        return 2, {"status": "unparseable", "reason": "the verify report is hidden on GitHub — a person set it aside"}
+        return 2, dict(named, status="unparseable", reason="the verify report is hidden on GitHub — a person set it aside")
     html = report.get("body_html")
     if not html:
-        return 2, {"status": "unparseable", "reason": "GitHub returned no rendered HTML for the verify report"}
+        return 2, dict(named, status="unparseable", reason="GitHub returned no rendered HTML for the verify report")
     with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as fh:
         fh.write(html)
         tmp = fh.name
@@ -252,7 +265,7 @@ def judge_report(repo, n, sha, base, since):
     try:
         result = json.loads(out)
     except ValueError:
-        return 2, {"status": "unparseable", "reason": f"verify-gate.py gave no JSON (exit {rc})"}
+        return 2, dict(named, status="unparseable", reason=f"verify-gate.py gave no JSON (exit {rc})")
     result["comment_id"] = report.get("id")
     result["verify_url"] = report.get("html_url")
     result["report_author"] = report.get("login")
@@ -260,10 +273,15 @@ def judge_report(repo, n, sha, base, since):
 
 
 def gate_stop(rc, gate):
-    """The one predicate every merge and push passes (r6 #1): clean, and nothing a person has to settle.
-    A clean result without these fields stops too."""
+    """The one predicate every merge and push of a run without a stop mode passes (r6 #1): clean, and nothing
+    a person has to settle. A clean result without these fields stops too."""
     if rc != 0:
         raise Stop(f"guardrail 1 (verify gate) — {gate.get('status')}: {gate.get('reason')}")
+    settled_stop(gate)
+
+
+def settled_stop(gate):
+    """Nothing in the report that a person has to settle (shared by the clean merge and the stop-mode merge)."""
     for field in ("rejected", "high_follow_up", "process_gaps"):
         if field not in gate or gate[field] is None:
             raise Stop(f"guardrail 1 (verify gate) — the gate did not report {field}")
@@ -287,34 +305,209 @@ def run_since(cwd, n):
 
 
 def cmd_gate(argv):
-    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value", "--sha": "value", "--base": "value"})
+    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value", "--sha": "value", "--base": "value",
+                     "--read-only": "value"})
     if a is None or not common_ok(a) or not SHA_RE.match(a.get("--sha", "")) \
-            or ("--base" in a and not SHA_RE.match(a["--base"])):
-        return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base")
+            or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes":
+        return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base and "
+                     "--read-only yes")
+    since = None
     try:
-        rc, result = judge_report(a["--repo"], a["--issue"], a["--sha"], a.get("--base"), run_since(a["--cwd"], a["--issue"]))
+        since = run_since(a["--cwd"], a["--issue"])   # the run this gate reads for; the record is written for it only
+        rc, result = judge_report(a["--repo"], a["--issue"], a["--sha"], a.get("--base"), since)
     except Stop as exc:
         rc, result = 2, {"status": "unparseable", "reason": str(exc)}
     except Exception as exc:  # fail closed: any surprise is unparseable, never "not clean"
         rc, result = 2, {"status": "unparseable", "reason": f"internal error: {exc.__class__.__name__}: {exc}"}
+    try:
+        # --read-only (Phase 5's PR body, verify r3 #1): judge, but leave the round record as Phase 4 left it
+        if "--read-only" not in a:
+            record_round(a["--cwd"], a["--repo"], a["--issue"], result, a["--sha"], since)
+    except Exception as exc:  # fail closed: a round that was not recorded must not read as a judged round
+        rc, result = 2, {"status": "unparseable", "reason": f"the round record could not be written: "
+                         f"{exc.__class__.__name__}: {exc}", "comment_id": result.get("comment_id")}
     print(json.dumps(result, ensure_ascii=False))
     return rc
+
+
+def write_state(cwd, n, st):
+    """Replace the run state in one step: a crash halfway leaves the old record, never half of a new one.
+    The temporary file is created exclusively (mkstemp), so a planted symlink is never written through."""
+    path = state_path(cwd, n)
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(st, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def read_state(cwd, repo, n):
+    """The run state as a dict with list-valued `rounds` and `attempts`, or Stop. One reader for gate, next and run."""
+    try:
+        with open(state_path(cwd, n), encoding="utf-8") as fh:
+            st = json.load(fh)
+    except OSError:
+        raise Stop("no run state for this issue")
+    except ValueError:
+        raise Stop("the run state is not valid JSON")
+    if not isinstance(st, dict):
+        raise Stop("the run state is not a JSON object")
+    if st.get("repo") != repo or str(st.get("issue")) != str(n):
+        raise Stop("the run state names another repo or issue")
+    for key in ("rounds", "attempts", "fix_answers"):
+        if not isinstance(st.get(key) or [], list) or not all(isinstance(r, dict) for r in st.get(key) or []):
+            raise Stop(f"the run state's {key} is not a list of records")
+    return st
+
+
+def record_round(cwd, repo, n, result, sha, since=None):
+    """#595/#591: the latest gate result; one attempt per verify round — a new commit, or a new report on the same
+    commit (a round whose report is missing or unreadable still counts); and one round per verify report this run
+    has not read yet. An unparseable
+    report's counts are not kept. No run state (gate run outside /idd-all): nothing is recorded."""
+    if not os.path.exists(state_path(cwd, n)):
+        return
+    st = read_state(cwd, repo, n)
+    # The report was picked with this run's start time (`since`). If another /idd-all replaced the run state while the
+    # gate was reading (or there was none then), the result belongs to no round of this run (verify r4 #1).
+    try:
+        created = parse_iso(st["created_at"])
+    except (KeyError, ValueError, TypeError):
+        created = None
+    if since is None or created != since:
+        raise Stop("the run state was replaced while the gate was reading; the result is not recorded")
+    rid = result.get("comment_id")
+    rounds, attempts = list(st.get("rounds") or []), list(st.get("attempts") or [])
+    at = iso(now())
+    st["last_gate"] = {"status": result.get("status"), "report_id": rid, "sha": sha, "reason": result.get("reason"),
+                       "at": at}
+    seen = [r.get("report_id") for r in rounds]
+    # An attempt is a verify round: a new commit, or on the same commit a report id (or no report id: the round's
+    # report is missing or could not be fetched, verify r2 #2) not read on it before. A fix pass that made no
+    # commit still counts, so the limit holds; reading the same result again on the same commit adds nothing.
+    on_sha = [a.get("report_id") for a in attempts if a.get("sha") == sha]
+    if not attempts or attempts[-1].get("sha") != sha or rid not in on_sha:
+        attempts.append({"sha": sha, "report_id": rid, "at": at})
+    if rid is not None and rid not in seen:
+        judged = result.get("status") != "unparseable"
+        rounds.append({"round": len(rounds) + 1, "sha": sha, "status": result.get("status"),
+                       "blocking": result.get("blocking") if judged else None,
+                       "in_scope": result.get("in_scope") if judged else None,
+                       "low_in_scope": result.get("low_in_scope") if judged else None,
+                       "high_in_scope": result.get("high_in_scope") if judged else None,
+                       "rejected": result.get("rejected") if judged else None,
+                       "report_id": rid, "at": at})
+        seen.append(rid)
+    st["rounds"], st["attempts"] = rounds, attempts
+    if rid is not None:
+        result["round"] = seen.index(rid) + 1
+    result["attempt"] = len(attempts)
+    write_state(cwd, n, st)
+
+
+# ── next ───────────────────────────────────────────────────────────────────
+
+def cmd_next(argv):
+    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value", "--read-only": "value"})
+    if a is None or not common_ok(a) or a.get("--read-only", "yes") != "yes":
+        return usage("next needs --cwd <dir> --repo owner/repo --issue <digits>, optionally --read-only yes")
+    unknown = {"decision": "stop", "merge": False, "mode": None, "rounds": [], "decided": False}
+    try:
+        st = read_state(a["--cwd"], a["--repo"], a["--issue"])
+        answer = decide(st)
+        if answer["decision"] == "fix" and "--read-only" not in a:
+            # Remember the result this fix answer is about: asked again with no new report or commit, it is a stop.
+            # Not recorded means no fix: a loop whose stop cannot be guaranteed does not run another round.
+            try:
+                st["fix_answers"] = list(st.get("fix_answers") or []) + [fix_key(st)]
+                write_state(a["--cwd"], a["--issue"], st)
+            except Exception as exc:
+                answer = dict(answer, decision="stop", merge=False, decided=False,
+                              reason=f"the fix answer could not be recorded ({exc.__class__.__name__}: {exc})")
+    except Stop as exc:
+        answer = dict(unknown, reason=f"no readable run state: {exc}")
+    except Exception as exc:  # fail closed: a surprise is a stop without a merge, never "fix"
+        answer = dict(unknown, reason=f"internal error: {exc.__class__.__name__}: {exc}")
+    decided = answer.pop("decided", True)
+    print(json.dumps(answer, ensure_ascii=False))
+    return 0 if decided else 3
+
+
+def merge_gate(st, rc, gate, sha):
+    """Guardrail 1 for every merge and push. Without a stop mode: a clean round, and no more than 2 recorded
+    rounds when unattended (#591). With one (#595): the newest report is the round `next` judged, and its
+    answer is stop with a merge."""
+    mode = st.get("verify_stop")
+    rounds = st.get("rounds") or []
+    # A result `next` answered with fix is never merged as it stands (verify r2 #3), with or without a stop mode.
+    if answered_fix(st, {"sha": sha, "report_id": gate.get("comment_id")}):
+        raise Stop("guardrail 1 (verify rounds) — next gave a fix answer for this report on this commit, and no new "
+                   "commit or report followed it")
+    if mode is None:
+        gate_stop(rc, gate)
+        if gate.get("comment_id") not in [r.get("report_id") for r in rounds]:   # an empty record too
+            raise Stop("guardrail 1 (verify rounds) — the newest verify report was never judged in Phase 4 "
+                       "(it is not in the round record)")
+        attempts = st.get("attempts") or []
+        # every round the gate recorded is also an attempt: fewer attempts than rounds is a record that cannot be
+        # counted (verify r3 #2), never "no rounds yet"
+        if not attempts or len(attempts) < len(rounds):
+            raise Stop(f"guardrail 1 (verify rounds) — the round record is inconsistent ({len(rounds)} round(s), "
+                       f"{len(attempts)} attempt(s)); the verify rounds cannot be counted")
+        if st.get("interaction") == "unattended" and len(attempts) > 2:
+            raise Stop(f"guardrail 1 (verify rounds) — {len(attempts)} verify rounds are recorded and a run without a stop "
+                       "mode allows 2 verify rounds; a person reviews the fixes after the second")
+        return
+    if rc == 2:
+        raise Stop(f"guardrail 1 (verify gate) — unparseable: {gate.get('reason')}")
+    if not rounds or rounds[-1].get("report_id") != gate.get("comment_id") or rounds[-1].get("sha") != sha:
+        raise Stop(f"guardrail 1 (stop mode {mode}) — the newest verify report is not the round the stop mode judged; "
+                   "run close-stage.py gate and next again")
+    # The table is applied to the counts the gate just re-read, not only to the record (verify r2 #1).
+    for field in ("blocking", "in_scope", "low_in_scope"):
+        if rounds[-1].get(field) != gate.get(field):
+            raise Stop(f"guardrail 1 (stop mode {mode}) — the round record's {field} ({rounds[-1].get(field)}) does not "
+                       f"match the report the close stage re-read ({gate.get(field)}); run close-stage.py gate and next again")
+    answer = decide(st)
+    if answer["decision"] != "stop" or not answer["merge"]:
+        raise Stop(f"guardrail 1 (stop mode {mode}) — {answer['reason']}; the stop mode does not merge this round "
+                   f"(answer: {answer['decision']})")
+    settled_stop(gate)
+    # A serious In-scope fix finding is not left behind by a merge (verify round 1 #1): the close stage checks it
+    # itself, whatever Phase 4 did about security findings.
+    high = gate.get("high_in_scope")
+    if not isinstance(high, int) or high:
+        left = "an unknown number of" if not isinstance(high, int) else str(high)
+        raise Stop(f"guardrail 1 (stop mode {mode}) — the report leaves {left} In-scope fix finding(s) of severity "
+                   "CRITICAL, HIGH, P0 or P1; a stop mode merges only when none is left")
+    # The clean merge requires a complete coverage line and reviewers line; verify-gate reads them for every verdict.
+    for field, what in (("coverage_complete", "a complete coverage line (X / X requirements addressed)"),
+                        ("reviewers_complete", "a complete reviewers line (X / X reviewers completed)")):
+        if gate.get(field) is not True:
+            raise Stop(f"guardrail 1 (stop mode {mode}) — the report has no {what}; a merge needs it as a clean one does")
 
 
 # ── run: shared checks ─────────────────────────────────────────────────────
 
 def load_state(cwd, repo, n):
     try:
-        with open(state_path(cwd, n), encoding="utf-8") as fh:
-            st = json.load(fh)
-    except (OSError, ValueError):
-        raise Stop("no run state for this issue (Step 0.7 did not record the run's flags) — not merging")
-    if st.get("repo") != repo or str(st.get("issue")) != str(n):
-        raise Stop("the run state names another repo or issue — not merging")
+        st = read_state(cwd, repo, n)
+    except Stop as exc:
+        raise Stop(f"{exc} (Step 0.7 records the run's flags) — not merging")
     try:
         age = now() - parse_iso(st["created_at"])
     except (KeyError, ValueError, TypeError):
         raise Stop("the run state has no readable creation time — not merging")
+    # A run with a stop mode can run for long (#595): its age counts from the last verify round it recorded.
+    if st.get("verify_stop") and st.get("rounds"):
+        try:
+            age = now() - parse_iso(st["rounds"][-1]["at"])
+        except (KeyError, ValueError, TypeError):
+            raise Stop("the run state has no readable time for its last verify round — not merging")
     if age > STATE_TTL or age < -300:
         raise Stop("the run state is older than 24 hours (an earlier run's) — not merging; rerun /idd-all")
     return st
@@ -521,7 +714,7 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     since = parse_iso(st["created_at"])
 
     rc, gate = judge_report(repo, n, sha, base, since)
-    gate_stop(rc, gate)
+    merge_gate(st, rc, gate, sha)
 
     # Local CI decides; remote checks are waited for only in remote mode. With a local pass they are read once,
     # right before the merge, and reported (capability local-ci-gate: they do not block the merge decision).
@@ -546,14 +739,15 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
         raise Stop("guardrail 3 (auto-close trap) — close keyword next to an issue reference in commit(s): " + ", ".join(hits))
 
     subject = f"{pr.get('title') or ''} (#{pr['number']})"
-    body = f"Refs #{n}\n\nMerged by /idd-all after a clean verify: {gate.get('verify_url')}\n"
+    how = f"stop mode {st['verify_stop']}" if st.get("verify_stop") else "a clean verify"
+    body = f"Refs #{n}\n\nMerged by /idd-all after {how}: {gate.get('verify_url')}\n"
     if trap_hits(subject + "\n" + body):
         raise Stop(f"guardrail 4 (squash message) — close keyword next to an issue reference: {subject[:120]}")
 
     # The CI wait can take minutes: everything that can change meanwhile is read again right before the merge.
     base = pr_base(cwd, repo, default, sha)
     rc, gate = judge_report(repo, n, sha, base, since)
-    gate_stop(rc, gate)
+    merge_gate(st, rc, gate, sha)
     me = session_login()
     comments = issue_comments(repo, n)
     check_others(me, since, comments, issue_meta(repo, n))
@@ -627,7 +821,7 @@ def run_direct(st, cwd, repo, n, partial):
     if changed_ci:
         raise Stop(f"the change edits CI ({', '.join(changed_ci[:3])}) — workflow changes are pushed by a person")
     rc, gate = judge_report(repo, n, head, base, parse_iso(st["created_at"]))
-    gate_stop(rc, gate)
+    merge_gate(st, rc, gate, head)
     # Local CI before the push. In remote mode there is no remote result for commits that were never pushed,
     # so the push proceeds and remote CI runs after it (as before #465).
     local = ci_guardrail(cwd, head)
@@ -635,7 +829,7 @@ def run_direct(st, cwd, repo, n, partial):
     # as the PR path does after its CI wait (verify r8 #1).
     since = parse_iso(st["created_at"])
     rc, gate = judge_report(repo, n, head, base, since)
-    gate_stop(rc, gate)
+    merge_gate(st, rc, gate, head)
     check_others(session_login(), since, issue_comments(repo, n), issue_meta(repo, n))
     # Everything below names `head`, never HEAD: another session can move HEAD
     # or switch the branch while the checks run (#392 verify r2 #1).
@@ -832,9 +1026,10 @@ def cmd_pr_check(argv):
 
 def main(argv):
     if not argv:
-        return usage("subcommand required: init | reset | gate | pr-check | run | confirm-close")
+        return usage("subcommand required: init | reset | gate | next | pr-check | run | confirm-close")
     sub, rest = argv[0], argv[1:]
-    handlers = {"init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "pr-check": cmd_pr_check, "run": cmd_run,
+    handlers = {"init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "next": cmd_next, "pr-check": cmd_pr_check,
+                "run": cmd_run,
                 "confirm-close": cmd_confirm}
     if sub not in handlers:
         return usage(f"unknown subcommand '{sub}'")
