@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-11-22
+
+Ships #595 and #591.
+
+### Added
+
+- **Stop modes for the verify loop of `/idd-all` (#595).** The repository config field `verify_stop.mode`, or
+  `/idd-all --stop <mode>` for one run (the flag wins; a config value outside the three is no stop mode, with
+  one line saying so), chooses when the verify-and-fix loop stops and whether that stop merges:
+  `early` stops when the to-fix count (Blocking plus In-scope fix above LOW) is 0 or no longer falls, and
+  merges when Blocking is 0; `exhaustive-blocking` fixes until no Blocking, and stops without a merge when
+  Blocking did not fall in each of the last two rounds; `exhaustive-all` fixes until no Blocking and no
+  In-scope fix, LOW included, with no round limit (`--review` and `--in-chain` count Blocking only). A run
+  with a mode fixes on its own when attended too; a security finding still stops it.
+- `close-stage.py gate` records every verify round in the run state; `close-stage.py next` reads that record
+  and answers fix or stop, with the reason, the mode and the to-fix count of each round
+  (`scripts/lib/stopmode.py`). `gate` and `next` take `--read-only yes`, which Phase 5 uses for the PR body.
+  `verify-gate.py` now reports `coverage_complete`, `reviewers_complete` and `high_in_scope` for every verdict.
+
+### Changed
+
+- **The two-round limit of a run without a stop mode is enforced in code (#591).** The close stage stops an
+  unattended run whose record holds more than 2 rounds, whose newest report Phase 4 never judged (an empty
+  record included), or whose record holds fewer attempts than rounds. A round is a verify attempt: a new
+  commit, or on the same commit a report not read on it before (a missing report included).
+- A gate result that `next` answered with fix is answered stop without a merge when asked again with no new
+  commit or report, in every run, so the loop always ends.
+- A stop-mode merge takes the commit the last round reviewed, requires the re-read report's counts to match
+  the round record, never leaves a CRITICAL, HIGH, P0 or P1 In-scope fix, files the findings left as one
+  follow-up issue, and passes the clean merge's guardrails. A stop-mode run's 24-hour run-state age counts
+  from its last round.
+- Known and left open: concurrent `/idd-all` runs on one issue, a run-state record without `verify_stop`, and
+  one fewer fix round when the first gate cannot write the record (#602); under zsh Step 0.2 does not read
+  the last argument (#598).
+
 ## [4.2.0] - 2026-11-16
 
 Ships #548.
