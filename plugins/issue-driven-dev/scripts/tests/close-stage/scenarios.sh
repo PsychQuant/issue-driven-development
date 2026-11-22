@@ -109,7 +109,7 @@ run_stage() { # → OUT, RC. Phase 4 always judges the round before the close st
   if [ -z "${NO_PREGATE:-}" ] && [ -n "${SHA:-}" ]; then
     IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" >/dev/null 2>&1
   fi
-  OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
+  OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout "${CI_TIMEOUT:-0.5}" --ci-grace 0 2>"$S/err"); RC=$?
 }
 
 calls_with() { [ -f "$S/gh/calls.log" ] || { echo 0; return; }; grep -c -- "$1" "$S/gh/calls.log"; }
@@ -186,7 +186,8 @@ stop_case "a FAIL report" "guardrail 1"
 pr_scenario cifail; echo '[{"name": "test", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-1.json"; run_stage
 stop_case "a failed check" "failed: test"
 pr_scenario cipending; echo '[{"name": "test", "bucket": "pending", "event": "pull_request"}]' > "$S/gh/checks-1.json"; echo 8 > "$S/gh/checks.rc"
-echo '[{"name": "test", "bucket": "pass", "event": "pull_request"}]' > "$S/gh/checks-2.json"; run_stage
+echo '[{"name": "test", "bucket": "pass", "event": "pull_request"}]' > "$S/gh/checks-2.json"
+CI_TIMEOUT=60 run_stage   # #602: 0.5 s was shorter than one fake gh call under load; the wait never sleeps (IDD_SLEEP=0)
 assert_eq "a pending check that then passes: merged" "merged" "$(printf '%s' "$OUT" | field status)"
 pr_scenario nochecks; rm "$S/gh/checks-1.json"; run_stage
 assert_eq "no checks and no pull_request workflow: merged" "merged" "$(printf '%s' "$OUT" | field status)"
@@ -1080,6 +1081,65 @@ except m.Stop as exc:   # only the close stage's own refusal counts
 PY
 )
 assert_grep "gate: a result read for a replaced run is refused" "refused 0" "$RR"
+# spec-example: idd-pr-hitl-modes / the run state is identified and locked
+# #602 1: a run replaced within the same second (same created_at, another run_id) is not recorded
+pr_scenario stop-gate-sameSecond
+RR=$(python3 - "$CS" "$C" "$REPO" "$N" "$SHA" <<'PY'
+import importlib.util, json, sys
+cs, cwd, repo, n, sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+ident = m.run_identity(cwd, n)
+p = m.state_path(cwd, n); st = json.load(open(p)); st["run_id"] = "another-run"; json.dump(st, open(p, "w"))
+try:
+    m.record_round(cwd, repo, n, {"status": "clean", "comment_id": 5, "blocking": 0, "in_scope": 0}, sha, ident["created_at"], ident["run_id"])
+    print("written", len(json.load(open(p)).get("rounds") or []))
+except m.Stop as exc:
+    print("refused", len(json.load(open(p)).get("rounds") or []), exc)
+PY
+)
+assert_grep "gate: a run replaced with the same created_at but another run_id is refused" "refused 0" "$RR"
+pr_scenario stop-runid
+assert_grep "init: the run state carries a run_id" '"run_id": "' "$(cat "$C/.claude/.idd/state/idd-all-run-7.json")"
+# #602 1: the run-state lock is exclusive, and record_round takes it
+pr_scenario stop-gate-lock
+LK=$(python3 - "$CS" "$C" "$REPO" "$N" "$SHA" <<'PY'
+import fcntl, importlib.util, os, subprocess, sys
+cs, cwd, repo, n, sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+probe = "import fcntl,os,sys\nfd=os.open(sys.argv[1], os.O_RDWR)\ntry:\n fcntl.flock(fd, fcntl.LOCK_EX|fcntl.LOCK_NB); print('free')\nexcept BlockingIOError:\n print('held')"
+with m.state_lock(cwd, n):
+    held = subprocess.run([sys.executable, "-c", probe, m.lock_path(cwd, n)], capture_output=True, text=True).stdout.strip()
+after = subprocess.run([sys.executable, "-c", probe, m.lock_path(cwd, n)], capture_output=True, text=True).stdout.strip()
+taken = []
+real = m.state_lock
+def spy(*a, **k):
+    taken.append(1); return real(*a, **k)
+m.state_lock = spy
+ident = m.run_identity(cwd, n)
+m.record_round(cwd, repo, n, {"status": "clean", "comment_id": 5, "blocking": 0, "in_scope": 0}, sha, ident["created_at"], ident["run_id"])
+print(f"inside={held} after={after} record_round_locks={len(taken)}")
+PY
+)
+assert_eq "lock: held inside state_lock, free after, and record_round takes it" "inside=held after=free record_round_locks=1" "$LK"
+# #602 2: a record without verify_stop is refused, never read as no stop mode
+pr_scenario stop-no-verify-stop
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p)); st.pop("verify_stop"); json.dump(st, open(p, "w"))
+PY
+next_run
+assert_eq "next: a record without verify_stop → stop" stop "$(nx decision)"
+assert_exit "next: a record without verify_stop → undecided" 3 "$RC"
+assert_grep "next: … and says verify_stop" "verify_stop" "$(nx reason)"
+NO_PREGATE=1 run_stage
+stop_case "run: a record without verify_stop" "verify_stop"
+# spec-example: idd-pr-hitl-modes / next says whether it decided
+# #602 3: next prints decided, so Phase 4 can take the fallback without the exit code
+new_scenario stop-decided; init_state PR PR no no unattended none; next_run
+assert_eq "next: nothing recorded yet → decided is false in the answer" False "$(nx decided)"
+write_rounds none unattended no "0,3,0"; next_run
+assert_eq "next: one not_clean round → fix" fix "$(nx decision)"
+assert_eq "next: … and decided is true" True "$(nx decided)"
 # verify r5 #4: a run-state path the close stage refuses (a symlink) is an unparseable gate result, not a traceback
 pr_scenario stop-gate-symlink
 mv "$C/.claude/.idd/state/idd-all-run-7.json" "$S/real-state.json"
