@@ -10,4 +10,4 @@
 
 ## 3. 回歸
 
-- [ ] 3.1 [after: 2.1, 2.2, 2.3] `run-all-tests.sh` 全過。
+- [x] 3.1 [after: 2.1, 2.2, 2.3] `run-all-tests.sh` 全過。
