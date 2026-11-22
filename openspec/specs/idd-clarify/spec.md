@@ -24,7 +24,6 @@ The `/idd-clarify` skill SHALL dispatch on presence of `--status` flag at invoca
 - **WHEN** `/idd-clarify #42 --status resolved=2,user-confirmed-canonical-term` is invoked
 - **THEN** the skill SHALL execute update mode, locate row 2 in the existing `### Clarity Surface` block, and change its status from previous value to `resolved` with the reason field set
 
----
 ### Requirement: Scan mode SHALL detect three classes (terminology / ambiguity / missing-context)
 
 Scan mode SHALL examine the issue body for three distinct gap categories: (1) terminology — domain terms matching the canonical library's source-term + context pattern; (2) ambiguity — phrases with multiple plausible interpretations or critical under-specified variables; (3) missing-context — analysis or implementation requirements naming inputs whose source is not declared. Each detected candidate becomes a row in the emitted `### Clarity Surface` table with status field set to `surfaced` (attended) or `deferred` (unattended, per Step 4.8.A).
@@ -39,7 +38,6 @@ Scan mode SHALL examine the issue body for three distinct gap categories: (1) te
 - **WHEN** scan mode finds no candidates in any of the three classes
 - **THEN** the skill SHALL still emit a `### Clarity Surface` block containing a single row `(none) | — | no issues detected | passed`, ensuring downstream `/idd-diagnose` Step 0.5 gate can distinguish "never ran clarify" from "ran and passed"
 
----
 ### Requirement: Step 4.8.A SHALL detect unattended mode and write deferred rows with registry-cited reason
 
 In scan mode, Step 4.8.A SHALL execute before Step 5a and detect unattended invocation context via the union of (a) no controlling TTY on stdin (`[ ! -t 0 ]`) and (b) `IDD_ALL_UNATTENDED` environment variable being set. When detected as unattended, Step 5a SHALL write each detected row with `status=deferred` and `reason` field set to the literal `unattended-auto-Step-4.6-deferred` cited from `plugins/issue-driven-dev/rules/append-vs-modify.md` § Reason pattern registry, instead of writing `surfaced`. The unattended variant SHALL use the 5-column table schema (Type / Source / Suggested canonical / Status / Reason).
@@ -59,7 +57,6 @@ In scan mode, Step 4.8.A SHALL execute before Step 5a and detect unattended invo
 - **WHEN** `/idd-clarify #42` is invoked with TTY on stdin and `IDD_ALL_UNATTENDED` unset
 - **THEN** Step 4.8.A SHALL set `IS_UNATTENDED=false` and Step 5a SHALL emit rows with `status=surfaced` using the 4-column schema (no Reason column)
 
----
 ### Requirement: Reason literal SHALL cite the central registry
 
 The unattended-mode reason literal SHALL be cited from `plugins/issue-driven-dev/rules/append-vs-modify.md` § Reason pattern registry. The literal SHALL appear in that registry exactly once as the single source of truth. SKILL.md implementations SHALL reference the literal by cite (with cross-link to the registry section), not by inline duplication that would risk typo drift between sites.
@@ -74,7 +71,6 @@ The unattended-mode reason literal SHALL be cited from `plugins/issue-driven-dev
 - **WHEN** `/idd-clarify` SKILL.md Step 4.8.A is read
 - **THEN** the SKILL.md SHALL contain a cite reference to `rules/append-vs-modify.md` § Reason pattern registry rather than embedding the literal as a standalone constant detached from the registry
 
----
 ### Requirement: Update mode SHALL preserve IC_R007 verbatim discipline
 
 Update mode SHALL modify only the status enum field of the named row. The skill SHALL NOT alter the Source quoted excerpt (IC_R007 verbatim preservation), Type field, Suggested canonical field, or any other row content. Update mode SHALL NOT alter any other row in the `### Clarity Surface` block beyond the named row. Update mode SHALL NOT alter any issue body content outside the `### Clarity Surface` block.
@@ -89,7 +85,6 @@ Update mode SHALL modify only the status enum field of the named row. The skill 
 - **WHEN** update mode targets row 2, and rows 1 and 3 exist in the block
 - **THEN** rows 1 and 3 SHALL remain unchanged in all fields after the update completes
 
----
 ### Requirement: Step 4.6 mandatory auto-delegation from /idd-issue
 
 `/idd-issue` Step 4.6 SHALL auto-delegate to `/idd-clarify $NEW_ISSUE_NUMBER` after the issue is created and before Step 4.7 Sister Sweep, unless `--multi-finding` mode is active. This delegation SHALL be mandatory (not advisory) per #135 v4 design D2. Failure of `/idd-clarify` SHALL NOT silently bypass — `/idd-issue` SHALL emit a deferred placeholder row into the issue body so downstream `/idd-diagnose` Step 0.5 gate catches the gap.
@@ -104,7 +99,6 @@ Update mode SHALL modify only the status enum field of the named row. The skill 
 - **WHEN** `/idd-issue source.docx` triggers multi-finding mode (≥2 findings detected)
 - **THEN** Step 4.6 SHALL NOT auto-delegate (per #135 v4 design D3 — cost prevention to avoid N × prompt multiplication)
 
----
 ### Requirement: Source preservation guard SHALL apply across all modes
 
 `/idd-clarify` SHALL NOT modify source blockquotes (lines beginning with `>`) per IC_R007 verbatim preservation, and SHALL NOT modify any existing `### ` heading content beyond emitting its own `### Clarity Surface` block at the body tail. Scan mode appends; update mode modifies only the targeted row's status field within its own emitted block.
@@ -118,22 +112,3 @@ Update mode SHALL modify only the status enum field of the named row. The skill 
 
 - **WHEN** scan mode runs on an issue whose body contains `## Problem` and `## Expected` sections
 - **THEN** both sections SHALL appear unchanged in the body after scan mode emits its `### Clarity Surface` block at the body tail
-
----
-### Requirement: idd-clarify reads every argument in bash and zsh
-
-`/idd-clarify` Step 1 SHALL read every argument it is given under both bash and zsh, including the value that follows `--status` or `--cwd`, so a trailing flag is never dropped.
-
-#### Scenario: A trailing status update under zsh
-
-- **GIVEN** the Step 1 block run under zsh
-- **WHEN** the arguments are `#8 --status resolved=2,checked`
-- **THEN** the issue, the action, the row and the reason are all read, as under bash
-
-##### Example: idd-clarify reads the last argument in both shells
-
-| Arguments | Under bash and under zsh |
-| --- | --- |
-| `#8 --status resolved=2,checked` | `NUMBER=8`, `STATUS_ACTION=resolved`, `STATUS_ROW_IDX=2`, `STATUS_REASON=checked` |
-| `--cwd=/tmp/x #8` | `NUMBER=8`, `CWD_FLAG=/tmp/x` |
-| `#8 --status dismissed=3` | `STATUS_ACTION=dismissed`, `STATUS_ROW_IDX=3`, `STATUS_REASON=` (empty) |
