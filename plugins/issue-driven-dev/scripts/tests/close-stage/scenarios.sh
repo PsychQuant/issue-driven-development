@@ -1130,9 +1130,9 @@ PY
 next_run
 assert_eq "next: a record without verify_stop → stop" stop "$(nx decision)"
 assert_exit "next: a record without verify_stop → undecided" 3 "$RC"
-assert_grep "next: … and says verify_stop" "verify_stop" "$(nx reason)"
+assert_grep "next: … and says verify_stop is missing" "has no verify_stop field" "$(nx reason)"
 NO_PREGATE=1 run_stage
-stop_case "run: a record without verify_stop" "verify_stop"
+stop_case "run: a record without verify_stop" "has no verify_stop field"
 # spec-example: idd-pr-hitl-modes / next says whether it decided
 # #602 3: next prints decided, so Phase 4 can take the fallback without the exit code
 new_scenario stop-decided; init_state PR PR no no unattended none; next_run
