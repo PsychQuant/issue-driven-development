@@ -121,6 +121,8 @@ if spectra list --parked --json | jq -e --arg n "$CHANGE" 'any(.parked[]?; .name
 fi
 ```
 
+unpark 之後、apply 之前再跑一次 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`，印法與第 3 步相同，不是 `ok` 就停下（#611）。`spectra park` 會把 change 移出工作樹，第 3 步那一次看不到它；unpark 把它連同作者 email 一起移回 `changes/`。
+
 然後 `Skill(skill="spectra-apply", args="<change 名稱>")`（無人值守時附上第 3 步那一段）。每個 Example 的測試先寫、先看到它失敗，再寫程式。進度記在 change 的 `tasks.md`，不另外建 TaskList。
 
 ## 5. Close-out（verify 之前，順序固定）

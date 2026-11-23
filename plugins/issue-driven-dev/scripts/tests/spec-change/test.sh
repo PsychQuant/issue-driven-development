@@ -1692,6 +1692,7 @@ assert_exit "scrub-authors: not a git repository → exit 2" 2 "$RC"
 echo "spec-change: scrub-authors (Example: the wrapper's two calls)"
 SA_WRAP="$HERE/../../../references/spec-wrapper.md"
 SA_S3=$(sed -n '/^## 3\. Propose/,/^## 4\. /p' "$SA_WRAP")
+SA_S4=$(sed -n '/^## 4\. Apply/,/^## 5\. /p' "$SA_WRAP")
 SA_S5=$(sed -n '/^## 5\. Close-out/,/^## 6\. /p' "$SA_WRAP")
 SA_CALL='spec-change.py" scrub-authors --cwd "$CWD"'
 assert_grep "the wrapper's step 3 runs scrub-authors" "$SA_CALL" "$SA_S3"
@@ -1703,6 +1704,13 @@ assert_eq "… step 5 has one archive item, one scrub call and one archive-commi
   "$(printf '%s\n' "$SA_L_ARCH" | grep -c .) $(printf '%s\n' "$SA_L_CALL" | grep -c .) $(printf '%s\n' "$SA_L_COMMIT" | grep -c .)"
 assert_true "… in step 5 after spectra archive and before the archive commit" \
   "[ -n '$SA_L_CALL' ] && [ '${SA_L_ARCH:-0}' -lt '${SA_L_CALL:-0}' ] && [ '${SA_L_CALL:-0}' -lt '${SA_L_COMMIT:-0}' ]"
+SA_L4_UNPARK=$(printf '%s\n' "$SA_S4" | grep -n 'spectra unpark "\$CHANGE"' | cut -d: -f1)
+SA_L4_CALL=$(printf '%s\n' "$SA_S4" | grep -nF "$SA_CALL" | cut -d: -f1)
+SA_L4_APPLY=$(printf '%s\n' "$SA_S4" | grep -n 'Skill(skill="spectra-apply"' | cut -d: -f1)
+assert_eq "… step 4 has one unpark line, one scrub call and one apply call" "1 1 1" \
+  "$(printf '%s\n' "$SA_L4_UNPARK" | grep -c .) $(printf '%s\n' "$SA_L4_CALL" | grep -c .) $(printf '%s\n' "$SA_L4_APPLY" | grep -c .)"
+assert_true "… in step 4 after the unpark and before spectra-apply (spectra park moves the change out of the tree)" \
+  "[ -n '$SA_L4_CALL' ] && [ '${SA_L4_UNPARK:-0}' -lt '${SA_L4_CALL:-0}' ] && [ '${SA_L4_CALL:-0}' -lt '${SA_L4_APPLY:-0}' ]"
 assert_grep "the wrapper's step 3 runs scrub-authors on the go-on-with branch too" 'scrub-authors' \
   "$(printf '%s\n' "$SA_S3" | grep -F '`go on with <名稱>`')"
 
@@ -1719,6 +1727,16 @@ print(len(rows), " ".join(sorted(set(rows))))' "$SA_SKILLS/idd-implement/SKILL.m
 assert_eq "idd-implement and idd-all restate the close-out order three times, each with scrub-authors between the archive and the commit" "3 ok" "$SA_ORDER"
 SA_IDDALL_PROPOSE=$(sed -n '/^#### Step 3b\.3: Propose/,/^#### Step 3b\.4/p' "$SA_SKILLS/idd-all/SKILL.md")
 assert_grep "idd-all runs scrub-authors after its own propose" "$SA_CALL" "$SA_IDDALL_PROPOSE"
+SA_IDDALL_APPLY=$(sed -n '/^#### Step 3b\.4: Apply/,/^#### Step 3b\.5/p' "$SA_SKILLS/idd-all/SKILL.md")
+SA_A_CALL=$(printf '%s\n' "$SA_IDDALL_APPLY" | grep -nF "$SA_CALL" | head -1 | cut -d: -f1)
+SA_A_APPLY=$(printf '%s\n' "$SA_IDDALL_APPLY" | grep -n 'Skill(skill="spectra-apply"' | head -1 | cut -d: -f1)
+assert_true "idd-all runs scrub-authors before its own spectra-apply" \
+  "[ -n '$SA_A_CALL' ] && [ -n '$SA_A_APPLY' ] && [ '$SA_A_CALL' -lt '$SA_A_APPLY' ]"
+SA_IMPL4=$("$PY" -c 'import sys
+rows = [l for l in open(sys.argv[1], encoding="utf-8") if "spectra unpark" in l and "spectra-apply" in l]
+ok = [l for l in rows if l.find("spectra unpark") < l.find("scrub-authors") < l.find("spectra-apply")]
+print(len(rows), len(ok))' "$SA_SKILLS/idd-implement/SKILL.md")
+assert_eq "idd-implement's restated step 4 names scrub-authors between the unpark and spectra-apply" "1 1" "$SA_IMPL4"
 
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"

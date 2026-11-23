@@ -989,6 +989,8 @@ Before anything is committed, remove the author's address that Spectra wrote int
 
 #### Step 3b.4: Apply
 
+If the change is parked, unpark it first (`spectra unpark "<change-name>"`). Then run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"` before `spectra-apply`, as [`references/spec-wrapper.md`](../../references/spec-wrapper.md) step 4 does (#611). `spectra park` moves a change out of the working tree, so the run after propose may not have seen it. Anything other than `ok` stops the run.
+
 ```bash
 APPLY_ARGS="<change-name from Step 3b.3>
 
