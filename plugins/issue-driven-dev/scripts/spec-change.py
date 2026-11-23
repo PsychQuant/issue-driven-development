@@ -83,7 +83,10 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       Every file is read and checked before any is rewritten, so an error found while reading leaves them all
       unchanged; an error while writing or staging names the files already rewritten. A file whose staged copy
       differs from HEAD is staged again after it is rewritten. Only the working copy is read: a staged copy
-      whose working copy is deleted or already has no address is not checked.
+      whose working copy is deleted or already has no address is not checked, and a working copy that matches
+      HEAD is left alone. Ignored files and symbolic links are not read. A file with a merge conflict, or a
+      directory under changes/ that cannot be read, is an error. A rewrite goes through a new file, so a hard
+      link to the old one keeps its bytes.
       {"status": "ok", "cleaned": [<paths relative to the repository top, sorted>]} or
       {"status": "error", "reason": "..."}
       exit 0 (ok), 2 (error)
@@ -97,6 +100,7 @@ import json
 import os
 import re
 import stat
+import tempfile
 import shutil
 import subprocess
 import sys
@@ -1133,6 +1137,7 @@ def cmd_link_base(argv):
         return emit({"status": "error", "reason": str(exc)}, 2)
 
 
+UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}   # git status codes of an unresolved merge
 AUTHOR_LINE_RE = re.compile(r"^(created_by|archived_by):[ \t]*(.*?)[ \t]*<[^<>\r\n]*@[^<>\r\n]*>[ \t]*$")
 LINE_END_RE = re.compile(r"(\r\n|\r|\n)$")
 
@@ -1140,17 +1145,17 @@ LINE_END_RE = re.compile(r"(\r\n|\r|\n)$")
 def scrub_author_lines(text):
     """The text with the address removed from created_by and archived_by lines, and whether anything changed."""
     out, changed = [], False
-    for line in text.splitlines(keepends=True):
-        m_end = LINE_END_RE.search(line)
-        end = m_end.group(1) if m_end else ""
-        body = line[: len(line) - len(end)]
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
+    parts = re.split(r"(\r\n|\r|\n)", text[len(bom):])   # YAML line breaks only, not str.splitlines()'s
+    for i in range(0, len(parts), 2):
+        body, end = parts[i], parts[i + 1] if i + 1 < len(parts) else ""
         m = AUTHOR_LINE_RE.match(body)
         if m:
             name = m.group(2)
             body = f"{m.group(1)}: {name}" if name else f"{m.group(1)}:"
             changed = True
         out.append(body + end)
-    return "".join(out), changed
+    return bom + "".join(out), changed
 
 
 def cmd_scrub_authors(argv):
@@ -1169,10 +1174,21 @@ def cmd_scrub_authors(argv):
             xy, path = rec[:2].decode("ascii", "replace"), os.fsdecode(rec[3:])
             if "R" in xy or "C" in xy:
                 i += 1   # a rename or copy carries the old path next
+            if os.path.basename(path) != ".openspec.yaml":
+                continue
+            if xy in UNMERGED:
+                raise Fail(f"{path} has a merge conflict; resolve it before scrub-authors runs")
             if "D" in xy:
                 continue
-            if os.path.basename(path) == ".openspec.yaml":
-                paths.append((path, xy[0] not in " ?"))   # second: the index holds a copy that differs from HEAD
+            paths.append((path, xy[0] not in " ?"))   # second: the index holds a copy that differs from HEAD
+        changes = os.path.join(top, sd, "changes")
+
+        def unreadable(exc):
+            raise Fail(f"cannot read {os.path.relpath(exc.filename, top) if exc.filename else 'a directory'} "
+                       f"under {sd}/changes: {exc.strerror or exc}")
+
+        for _ in os.walk(changes, onerror=unreadable):   # git status skips a directory it cannot open
+            pass
         # Read and check every file before rewriting any, so an error leaves them all as they were.
         plan = []
         for rel, staged in sorted(set(paths)):
@@ -1192,17 +1208,31 @@ def cmd_scrub_authors(argv):
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
                 raise Fail(f"{rel} is not UTF-8")
+            head = git(top, "show", f"HEAD:{rel}", check=False)
+            if head.returncode == 0 and head.stdout == raw:
+                continue   # the working copy matches HEAD; the requirement leaves it unchanged
             new, changed = scrub_author_lines(text)
             if changed:
-                plan.append((rel, full, new, staged))
+                plan.append((rel, full, new, staged, info.st_mode))
         cleaned = []
-        for rel, full, new, staged in plan:
+        for rel, full, new, staged, mode in plan:
             done = f" (already rewritten: {', '.join(cleaned)})" if cleaned else ""
+            tmp = None
             try:
-                with open(full, "wb") as fh:
+                fd, tmp = tempfile.mkstemp(prefix=".openspec.yaml.", dir=os.path.dirname(full))
+                with os.fdopen(fd, "wb") as fh:
                     fh.write(new.encode("utf-8"))
+                os.chmod(tmp, stat.S_IMODE(mode))
+                os.replace(tmp, full)   # a new file: a hard link to the old one keeps the old bytes
+                tmp = None
             except OSError as exc:
                 raise Fail(f"cannot write {rel}: {exc.strerror or exc}{done}")
+            finally:
+                if tmp is not None:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
             if staged:   # the next commit takes the staged copy, so stage the rewritten one
                 p = git(top, "add", "--", rel, check=False)
                 if p.returncode != 0:

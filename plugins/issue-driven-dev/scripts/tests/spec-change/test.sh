@@ -1530,6 +1530,13 @@ scrub_line_case "created_by without an address" 'created_by: t' '' no
 scrub_line_case "a name that holds angle brackets" 'created_by: a <b> c <x@example.test>' 'created_by: a <b> c' yes
 scrub_line_case "angle brackets without an @" 'created_by: t <no-address>' '' no
 scrub_line_case "another field with an address" 'owner: t <t@example.test>' '' no
+scrub_line_case "a name holding U+2028" "$(printf 'created_by: A\342\200\250B <t@example.test>')" "$(printf 'created_by: A\342\200\250B')" yes
+newrepo sa-bom; mkdir -p "$REPO/openspec/changes/c" || setup_failed "create the BOM change directory"
+printf '\357\273\277created_by: t <t@example.test>\nschema: spec-driven\n' > "$REPO/openspec/changes/c/.openspec.yaml"
+run scrub-authors --cwd "$REPO"
+printf '\357\273\277created_by: t\nschema: spec-driven\n' > "$WORK/sa-bom-expected"
+assert_eq "scrub-authors: a byte-order mark before the first line → listed" '["openspec/changes/c/.openspec.yaml"]' "$(printf '%s' "$OUT" | field cleaned)"
+require "scrub-authors: a byte-order mark before the first line → kept, address removed" cmp -s "$WORK/sa-bom-expected" "$REPO/openspec/changes/c/.openspec.yaml"
 
 echo "spec-change: scrub-authors (Example: which files scrub-authors reads)"
 SA_ADDR='created_by: t <t@example.test>'
@@ -1589,7 +1596,46 @@ if [ "$(id -u)" != 0 ]; then   # root can read a mode-000 file
   assert_exit "scrub-authors: a file that cannot be read → exit 2" 2 "$RC"
   assert_eq "… and the error has no cleaned list" "<missing>" "$(printf '%s' "$OUT" | field cleaned)"
   assert_eq "… and the other file with an address is left unchanged" "$SA_A" "$(cksum < "$REPO/openspec/changes/a/.openspec.yaml")"
+  rm -f "$REPO/openspec/changes/b/.openspec.yaml"
+  mkdir -p "$REPO/openspec/changes/d" || setup_failed "create the unreadable directory"
+  meta "$SA_ADDR" > "$REPO/openspec/changes/d/.openspec.yaml"; chmod 000 "$REPO/openspec/changes/d"
+  run scrub-authors --cwd "$REPO"
+  chmod 755 "$REPO/openspec/changes/d"
+  assert_eq "scrub-authors: a directory that cannot be read → error" error "$(printf '%s' "$OUT" | field status)"
+  assert_exit "scrub-authors: a directory that cannot be read → exit 2" 2 "$RC"
+  assert_eq "… and the file beside it is left unchanged" "$SA_A" "$(cksum < "$REPO/openspec/changes/a/.openspec.yaml")"
 fi
+newrepo sa-head; mkdir -p "$REPO/openspec/changes/m" || setup_failed "create the HEAD-match change directory"
+meta "$SA_ADDR" > "$REPO/openspec/changes/m/.openspec.yaml"; commit >/dev/null
+printf 'schema: spec-driven\ncreated: 2026-01-02\ncreated_by: t\ncreated_with: claude\n' > "$REPO/openspec/changes/m/.openspec.yaml"
+git -C "$REPO" add openspec/changes/m/.openspec.yaml || setup_failed "stage the edited copy"
+git -C "$REPO" show :openspec/changes/m/.openspec.yaml > "$WORK/sa-m-index" 2>/dev/null || setup_failed "read the staged copy"
+git -C "$REPO" show HEAD:openspec/changes/m/.openspec.yaml > "$REPO/openspec/changes/m/.openspec.yaml" || setup_failed "restore the working copy"
+SA_M=$(cksum < "$REPO/openspec/changes/m/.openspec.yaml")
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors files: a working copy that matches HEAD → not listed" "[]" "$(printf '%s' "$OUT" | field cleaned)"
+assert_eq "… and it is unchanged" "$SA_M" "$(cksum < "$REPO/openspec/changes/m/.openspec.yaml")"
+git -C "$REPO" show :openspec/changes/m/.openspec.yaml > "$WORK/sa-m-index2" 2>/dev/null || setup_failed "read the staged copy again"
+require "… and its staged copy is unchanged" cmp -s "$WORK/sa-m-index" "$WORK/sa-m-index2"
+newrepo sa-conflict; mkdir -p "$REPO/openspec/changes/c" || setup_failed "create the conflict change directory"
+meta 'created_by: t' > "$REPO/openspec/changes/c/.openspec.yaml"; commit >/dev/null
+git -C "$REPO" checkout -q -b other || setup_failed "branch for the conflict"
+meta 'created_by: x <x@example.test>' > "$REPO/openspec/changes/c/.openspec.yaml"; commit >/dev/null
+git -C "$REPO" checkout -q - || setup_failed "back to the first branch"
+meta 'created_by: m <m@example.test>' > "$REPO/openspec/changes/c/.openspec.yaml"; commit >/dev/null
+git -C "$REPO" merge -q other >/dev/null 2>&1; git -C "$REPO" status --porcelain | grep -q '^UU ' || setup_failed "make a merge conflict"
+SA_C=$(cksum < "$REPO/openspec/changes/c/.openspec.yaml")
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors: a merge conflict → error" error "$(printf '%s' "$OUT" | field status)"
+assert_exit "scrub-authors: a merge conflict → exit 2" 2 "$RC"
+assert_eq "… and the conflicted file is unchanged" "$SA_C" "$(cksum < "$REPO/openspec/changes/c/.openspec.yaml")"
+newrepo sa-link; mkdir -p "$REPO/openspec/changes/archive/2026-01-01-old" "$REPO/openspec/changes/h" || setup_failed "create the hard-link directories"
+meta "$SA_ADDR" > "$REPO/openspec/changes/archive/2026-01-01-old/.openspec.yaml"; commit >/dev/null
+ln "$REPO/openspec/changes/archive/2026-01-01-old/.openspec.yaml" "$REPO/openspec/changes/h/.openspec.yaml" || setup_failed "make the hard link"
+SA_OLDL=$(cksum < "$REPO/openspec/changes/archive/2026-01-01-old/.openspec.yaml")
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors files: a hard link → the untracked path is listed" '["openspec/changes/h/.openspec.yaml"]' "$(printf '%s' "$OUT" | field cleaned)"
+assert_eq "… and the committed file it linked to keeps its bytes" "$SA_OLDL" "$(cksum < "$REPO/openspec/changes/archive/2026-01-01-old/.openspec.yaml")"
 mkdir -p "$WORK/sa-not-git" || setup_failed "create a directory that is not a repository"
 run scrub-authors --cwd "$WORK/sa-not-git"
 assert_eq "scrub-authors: not a git repository → error" error "$(printf '%s' "$OUT" | field status)"
@@ -1602,9 +1648,11 @@ SA_S5=$(sed -n '/^## 5\. Close-out/,/^## 6\. /p' "$SA_WRAP")
 SA_CALL='spec-change.py" scrub-authors --cwd "$CWD"'
 assert_grep "the wrapper's step 3 runs scrub-authors" "$SA_CALL" "$SA_S3"
 assert_grep "the wrapper's step 5 runs scrub-authors" "$SA_CALL" "$SA_S5"
-SA_L_ARCH=$(printf '%s\n' "$SA_S5" | grep -n 'spectra archive' | head -1 | cut -d: -f1)
-SA_L_CALL=$(printf '%s\n' "$SA_S5" | grep -nF "$SA_CALL" | head -1 | cut -d: -f1)
-SA_L_COMMIT=$(printf '%s\n' "$SA_S5" | grep -n 'chore: archive' | head -1 | cut -d: -f1)
+SA_L_ARCH=$(printf '%s\n' "$SA_S5" | grep -n '^2\. `spectra archive' | cut -d: -f1)
+SA_L_CALL=$(printf '%s\n' "$SA_S5" | grep -nF "$SA_CALL" | cut -d: -f1)
+SA_L_COMMIT=$(printf '%s\n' "$SA_S5" | grep -n '^4\. commit：`chore: archive' | cut -d: -f1)
+assert_eq "… step 5 has one archive item, one scrub call and one archive-commit item" "1 1 1" \
+  "$(printf '%s\n' "$SA_L_ARCH" | grep -c .) $(printf '%s\n' "$SA_L_CALL" | grep -c .) $(printf '%s\n' "$SA_L_COMMIT" | grep -c .)"
 assert_true "… in step 5 after spectra archive and before the archive commit" \
   "[ -n '$SA_L_CALL' ] && [ '${SA_L_ARCH:-0}' -lt '${SA_L_CALL:-0}' ] && [ '${SA_L_CALL:-0}' -lt '${SA_L_COMMIT:-0}' ]"
 assert_grep "the wrapper's step 3 runs scrub-authors on the go-on-with branch too" 'scrub-authors' \
