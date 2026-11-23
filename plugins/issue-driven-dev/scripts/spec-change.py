@@ -1161,12 +1161,14 @@ def scrub_author_lines(text):
     return bom + "".join(out), changed
 
 
-def _no_symlinked_dirs(root, directory):
-    """Whether every directory from root down to directory is a real directory, not a symlink."""
+def _no_symlinked_dirs(root, directory, top):
+    """Whether every directory from root down to directory is a real directory, not a symlink.
+
+    A directory that is missing counts as not real; any other error reading one is a Fail."""
     rel = os.path.relpath(directory, root)
-    if rel == "." :
+    if rel == os.curdir:
         return True
-    if rel.startswith(".."):
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):   # not "..draft", a real name
         return False
     here = root
     for part in rel.split(os.sep):
@@ -1174,8 +1176,10 @@ def _no_symlinked_dirs(root, directory):
         try:
             if not stat.S_ISDIR(os.lstat(here).st_mode):
                 return False
-        except OSError:
+        except FileNotFoundError:
             return False
+        except OSError as exc:
+            raise Fail(f"cannot read {os.path.relpath(here, top)}: {exc.strerror or exc}")
     return True
 
 
@@ -1222,7 +1226,7 @@ def cmd_scrub_authors(argv):
         plan = []
         for rel, staged in sorted(set(paths)):
             full = os.path.join(top, rel)
-            if not _no_symlinked_dirs(changes, os.path.dirname(full)):
+            if not _no_symlinked_dirs(changes, os.path.dirname(full), top):
                 continue   # a symlinked directory on the way: not read, like a symlinked file
             try:
                 info = os.lstat(full)
