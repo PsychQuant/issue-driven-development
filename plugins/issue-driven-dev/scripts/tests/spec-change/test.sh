@@ -23,6 +23,7 @@
 # spec-example: spec-on-every-issue / lines of change metadata before and after
 # spec-example: spec-on-every-issue / which files scrub-authors reads
 # spec-example: spec-on-every-issue / the wrapper's two calls
+# spec-example: spec-on-every-issue / the close-out order restated by idd-implement and idd-all
 #
 # Fixture specs below use the made-up capability `cap`, so the markers inside
 # them never name a real Example.
@@ -1560,6 +1561,26 @@ meta "$SA_ADDR" > "$REPO/docs/spectra/changes/z/.openspec.yaml"
 run scrub-authors --cwd "$REPO"
 assert_eq "scrub-authors files: spec_dir docs/spectra → its change is listed" \
   '["docs/spectra/changes/z/.openspec.yaml"]' "$(printf '%s' "$OUT" | field cleaned)"
+require "scrub-authors files: spec_dir docs/spectra → rewritten" cmp -s "$WORK/sa-expected" "$REPO/docs/spectra/changes/z/.openspec.yaml"
+newrepo sa-staged; put README 'x'; commit >/dev/null
+mkdir -p "$REPO/openspec/changes/s" || setup_failed "create the staged change directory"
+meta "$SA_ADDR" > "$REPO/openspec/changes/s/.openspec.yaml"
+git -C "$REPO" add openspec/changes/s/.openspec.yaml || setup_failed "stage the change metadata"
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors files: staged → listed" '["openspec/changes/s/.openspec.yaml"]' "$(printf '%s' "$OUT" | field cleaned)"
+require "scrub-authors files: staged → the working copy is rewritten" cmp -s "$WORK/sa-expected" "$REPO/openspec/changes/s/.openspec.yaml"
+git -C "$REPO" show :openspec/changes/s/.openspec.yaml > "$WORK/sa-index" 2>/dev/null || setup_failed "read the staged copy"
+require "scrub-authors files: staged → the staged copy holds no address" cmp -s "$WORK/sa-expected" "$WORK/sa-index"
+newrepo sa-atomic; put README 'x'; commit >/dev/null
+mkdir -p "$REPO/openspec/changes/a" "$REPO/openspec/changes/b" || setup_failed "create the two change directories"
+meta "$SA_ADDR" > "$REPO/openspec/changes/a/.openspec.yaml"
+printf 'created_by: t <t@example.test>\n\377\n' > "$REPO/openspec/changes/b/.openspec.yaml"
+SA_A=$(cksum < "$REPO/openspec/changes/a/.openspec.yaml")
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors: a file that is not UTF-8 → error" error "$(printf '%s' "$OUT" | field status)"
+assert_exit "scrub-authors: a file that is not UTF-8 → exit 2" 2 "$RC"
+assert_eq "… and the error has no cleaned list" "<missing>" "$(printf '%s' "$OUT" | field cleaned)"
+assert_eq "… and the other file with an address is left unchanged" "$SA_A" "$(cksum < "$REPO/openspec/changes/a/.openspec.yaml")"
 mkdir -p "$WORK/sa-not-git" || setup_failed "create a directory that is not a repository"
 run scrub-authors --cwd "$WORK/sa-not-git"
 assert_eq "scrub-authors: not a git repository → error" error "$(printf '%s' "$OUT" | field status)"
@@ -1577,6 +1598,22 @@ SA_L_CALL=$(printf '%s\n' "$SA_S5" | grep -nF "$SA_CALL" | head -1 | cut -d: -f1
 SA_L_COMMIT=$(printf '%s\n' "$SA_S5" | grep -n 'chore: archive' | head -1 | cut -d: -f1)
 assert_true "… in step 5 after spectra archive and before the archive commit" \
   "[ -n '$SA_L_CALL' ] && [ '${SA_L_ARCH:-0}' -lt '${SA_L_CALL:-0}' ] && [ '${SA_L_CALL:-0}' -lt '${SA_L_COMMIT:-0}' ]"
+assert_grep "the wrapper's step 3 runs scrub-authors on the go-on-with branch too" 'scrub-authors' \
+  "$(printf '%s\n' "$SA_S3" | grep -F '`go on with <名稱>`')"
+
+echo "spec-change: scrub-authors (Example: the close-out order restated by idd-implement and idd-all)"
+SA_SKILLS="$HERE/../../../skills"
+SA_ORDER=$("$PY" -c 'import sys
+rows = []
+for path in sys.argv[1:]:
+    for line in open(path, encoding="utf-8"):
+        if "spectra archive" in line and "→ commit" in line:
+            a, s, c = line.find("spectra archive"), line.find("scrub-authors"), line.find("→ commit")
+            rows.append("ok" if a < s < c else "out-of-order")
+print(len(rows), " ".join(sorted(set(rows))))' "$SA_SKILLS/idd-implement/SKILL.md" "$SA_SKILLS/idd-all/SKILL.md")
+assert_eq "idd-implement and idd-all restate the close-out order three times, each with scrub-authors between the archive and the commit" "3 ok" "$SA_ORDER"
+SA_IDDALL_PROPOSE=$(sed -n '/^#### Step 3b\.3: Propose/,/^#### Step 3b\.4/p' "$SA_SKILLS/idd-all/SKILL.md")
+assert_grep "idd-all runs scrub-authors after its own propose" "$SA_CALL" "$SA_IDDALL_PROPOSE"
 
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"

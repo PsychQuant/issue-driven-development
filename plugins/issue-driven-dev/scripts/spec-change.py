@@ -80,7 +80,10 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       `created_by:` or `archived_by:` line whose value ends in an angle-bracketed part holding an @ keeps the
       field and the name only. Other lines, and files without such a line, stay byte-identical; a file that is
       not a regular file (a symbolic link) is not read. The spec directory is read from the working tree.
-      {"status": ok|error, "cleaned": [<paths relative to the repository top, sorted>], "reason": "..."}
+      Every file is read and checked before any is rewritten, so an error leaves them all unchanged; a file
+      whose staged copy differs from HEAD is staged again after it is rewritten.
+      {"status": "ok", "cleaned": [<paths relative to the repository top, sorted>]} or
+      {"status": "error", "reason": "..."}
       exit 0 (ok), 2 (error)
 
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
@@ -1167,9 +1170,10 @@ def cmd_scrub_authors(argv):
             if "D" in xy:
                 continue
             if os.path.basename(path) == ".openspec.yaml":
-                paths.append(path)
-        cleaned = []
-        for rel in sorted(set(paths)):
+                paths.append((path, xy[0] not in " ?"))   # second: the index holds a copy that differs from HEAD
+        # Read and check every file before rewriting any, so an error leaves them all as they were.
+        plan = []
+        for rel, staged in sorted(set(paths)):
             full = os.path.join(top, rel)
             try:
                 info = os.lstat(full)
@@ -1185,12 +1189,20 @@ def cmd_scrub_authors(argv):
                 raise Fail(f"{rel} is not UTF-8")
             new, changed = scrub_author_lines(text)
             if changed:
-                with open(full, "wb") as fh:
-                    fh.write(new.encode("utf-8"))
-                cleaned.append(rel)
+                plan.append((rel, full, new, staged))
+        cleaned = []
+        for rel, full, new, staged in plan:
+            with open(full, "wb") as fh:
+                fh.write(new.encode("utf-8"))
+            if staged:   # the next commit takes the staged copy, so stage the rewritten one
+                p = git(top, "add", "--", rel)
+                if p.returncode != 0:
+                    raise Fail(f"rewrote {rel} but could not stage it again: "
+                               f"{p.stderr.decode('utf-8', 'replace').strip()}")
+            cleaned.append(rel)
         return emit({"status": "ok", "cleaned": cleaned}, 0)
     except Fail as exc:
-        return emit({"status": "error", "cleaned": [], "reason": str(exc)}, 2)
+        return emit({"status": "error", "reason": str(exc)}, 2)
 
 
 def main(argv):

@@ -82,7 +82,7 @@ Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-impl
 | `→ spec step 3:` 印出的 | 做什麼 |
 |---|---|
 | `propose` | 往下 propose（下一段） |
-| `go on with <名稱>` | 不再 propose，直接第 4 步 |
+| `go on with <名稱>` | 不再 propose；先跑下面那段 `scrub-authors`（拿掉作者 email），再到第 4 步 |
 | `stop: …` | 停下，把那一行轉給人，不 apply。清單讀不到時先修好再跑；其餘的 `stop:` 都是開著的 change 沒有核准過的 plan 點名它（`proposed`、沒有 plan 點名它、最新的 plan 點名別的 change），要重跑 `/idd-plan`：它把 Implementation Plan 再呈現給人核准，核准後 plan 行寫上這個 change |
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
@@ -110,7 +110,7 @@ is_unattended "$CWD" && echo "→ spec wrapper: unattended" || echo "→ spec wr
 
 `spectra-propose` 結束時可能會 park 這個 change；第 4 步由 wrapper 自己 unpark，不交給 `spectra-apply` 去問。
 
-propose 之後、任何 commit 之前，拿掉 Spectra 寫進 change metadata 的作者 email（#611）：跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`。它只改規格目錄 `changes/` 底下未追蹤或與 HEAD 不同的 `.openspec.yaml`，把 `created_by`、`archived_by` 行尾 `<…@…>` 的部分拿掉、名字留著，其他位元組不動。印 `ok` 時，`cleaned` 有檔案就印 `→ spec metadata: removed the author's address from <檔案>`，沒有就印 `→ spec metadata: no address found`；印其他結果就停下回報，不 commit。每個 repo 都跑，不看它公開或私有。
+propose 之後、或印 `go on with` 沿用開著的 change 時，在任何 commit 之前拿掉 Spectra 寫進 change metadata 的作者 email（#611）：跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`。它只改規格目錄 `changes/` 底下未追蹤或與 HEAD 不同的 `.openspec.yaml`，把 `created_by`、`archived_by` 行尾 `<…@…>` 的部分拿掉、名字留著，其他位元組不動；已經 stage 的檔改完會再 stage 一次，暫存區不留舊的地址；先讀完、檢查完所有檔才寫，回報 error 時一個檔都沒改。印 `ok` 時，`cleaned` 有檔案就印 `→ spec metadata: removed the author's address from <檔案>`，沒有就印 `→ spec metadata: no address found`；印其他結果就停下回報，不 commit。每個 repo 都跑，不看它公開或私有。
 
 ## 4. Apply
 

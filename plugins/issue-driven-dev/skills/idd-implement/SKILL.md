@@ -81,7 +81,7 @@ TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Im
 TaskCreate(name="bootstrap_strategy_tasklist", description="Step 2.5: Simple complexity → 為每個 - [ ] bullet 建 TaskCreate; SDD → 跳過(spectra-apply 管)")
 TaskCreate(name="execute_tdd_loop", description="Step 3: pre-flight superpowers（check-plugin-presence.sh 三參數，缺席 fail-fast）→ 對每個 strategy item invoke superpowers:test-driven-development 完成 TDD 執行 → commit (#NNN) → TaskUpdate completed（#209 delegation）")
 TaskCreate(name="scope_guard", description="實作中發現不相關問題 → 開新 issue,不混入本 #NNN")
-TaskCreate(name="spec_closeout", description="Step 4.5 (#480): 有 change 時照 references/spec-wrapper.md 第 5 步收尾：spectra-verify → spectra archive → 確認落在工作樹 → commit → spec-change.py links / archived")
+TaskCreate(name="spec_closeout", description="Step 4.5 (#480): 有 change 時照 references/spec-wrapper.md 第 5 步收尾：spectra-verify → spectra archive → 確認落在工作樹 → spec-change.py scrub-authors → commit → spec-change.py links / archived")
 TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 checklist 狀態寫回 Implementation Complete comment")
 TaskCreate(name="open_pr_if_pr_path", description="Phase 5.5: PR path 才執行 — git push + gh pr create with Refs #NNN body")
 TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + reproduction trace, identify sister bugs / refactor opportunities / TODOs encountered; AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH Implementation Complete comment with `### Sister Bugs Filed` audit trail (per IC_R011 #526)")
@@ -621,7 +621,7 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 
 ### Step 4.5: Spec close-out（#480）
 
-有 change 時，在貼 Implementation Complete 之前照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步收尾，順序固定：`spectra-verify` → `spectra archive <名稱> -y` → 確認封存落在這個工作樹 → commit `chore: archive <名稱> (#N)` → `spec-change.py" links` → `spec-change.py" archived --ref HEAD`。任何一步沒過就停下修，不貼 Implementation Complete，不開 PR。
+有 change 時，在貼 Implementation Complete 之前照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步收尾，順序固定：`spectra-verify` → `spectra archive <名稱> -y` → 確認封存落在這個工作樹 → `spec-change.py" scrub-authors`（#611）→ commit `chore: archive <名稱> (#N)` → `spec-change.py" links` → `spec-change.py" archived --ref HEAD`。任何一步沒過就停下修，不貼 Implementation Complete，不開 PR。
 
 沒有 change（`no behaviour change`、`third-party clone`）→ 跳過這一步。
 
