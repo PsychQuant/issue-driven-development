@@ -82,7 +82,7 @@ Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-impl
 | `→ spec step 3:` 印出的 | 做什麼 |
 |---|---|
 | `propose` | 往下 propose（下一段） |
-| `go on with <名稱>` | 不再 propose，直接第 4 步 |
+| `go on with <名稱>` | 不再 propose；先跑下面那段 `scrub-authors`（拿掉作者 email），再到第 4 步 |
 | `stop: …` | 停下，把那一行轉給人，不 apply。清單讀不到時先修好再跑；其餘的 `stop:` 都是開著的 change 沒有核准過的 plan 點名它（`proposed`、沒有 plan 點名它、最新的 plan 點名別的 change），要重跑 `/idd-plan`：它把 Implementation Plan 再呈現給人核准，核准後 plan 行寫上這個 change |
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
@@ -110,6 +110,8 @@ is_unattended "$CWD" && echo "→ spec wrapper: unattended" || echo "→ spec wr
 
 `spectra-propose` 結束時可能會 park 這個 change；第 4 步由 wrapper 自己 unpark，不交給 `spectra-apply` 去問。
 
+propose 之後、或印 `go on with` 沿用開著的 change 時，在任何 commit 之前拿掉 Spectra 寫進 change metadata 的作者 email（#611）：跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`。它只改規格目錄 `changes/` 底下未追蹤或與 HEAD 不同的 `.openspec.yaml`，把 `created_by`、`archived_by` 行尾 `<…@…>` 的部分拿掉、名字留著，其他位元組不動；已經 stage 的檔改完會再 stage 一次，暫存區不留舊的地址；先讀完、檢查完所有檔才寫，讀檔或檢查時出錯就一個檔都不改，寫檔或重新 stage 時出錯則在訊息裡列出已經改過的檔。印 `ok` 時，`cleaned` 有檔案就印 `→ spec metadata: removed the author's address from <檔案>`，沒有就印 `→ spec metadata: no address found`；印其他結果就停下回報，不 commit。每個 repo 都跑，不看它公開或私有。
+
 ## 4. Apply
 
 ```bash
@@ -119,13 +121,15 @@ if spectra list --parked --json | jq -e --arg n "$CHANGE" 'any(.parked[]?; .name
 fi
 ```
 
+unpark 之後、apply 之前再跑一次 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`，印法與第 3 步相同，不是 `ok` 就停下（#611）。`spectra park` 會把 change 移出工作樹，第 3 步那一次看不到它；unpark 把它連同作者 email 一起移回 `changes/`。
+
 然後 `Skill(skill="spectra-apply", args="<change 名稱>")`（無人值守時附上第 3 步那一段）。每個 Example 的測試先寫、先看到它失敗，再寫程式。進度記在 change 的 `tasks.md`，不另外建 TaskList。
 
 ## 5. Close-out（verify 之前，順序固定）
 
 1. `Skill(skill="spectra-verify", args="<change 名稱>")`。回報 critical 就修；修不了就停下回報，不封存。
 2. `spectra archive <change 名稱> -y`。
-3. 確認封存落在要 commit 的這個工作樹：`openspec/changes/<change 名稱>/` 不見了，`openspec/changes/archive/` 底下多了 `<日期>-<change 名稱>`。沒有就停下。
+3. 確認封存落在要 commit 的這個工作樹：`openspec/changes/<change 名稱>/` 不見了，`openspec/changes/archive/` 底下多了 `<日期>-<change 名稱>`。沒有就停下。確認之後跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`，拿掉 `spectra archive` 寫進 `archived_by` 的 email（#611），印法與第 3 步相同；不是 `ok` 就停下，不 commit。
 4. commit：`chore: archive <change 名稱> (#N)`。
 5. 連結檢查：
 

@@ -985,7 +985,11 @@ Skill(skill="spectra-propose", args="$PROPOSE_ARGS")
 
 Capture the change-name line(unattended)or whatever spectra-propose prints last(attended).
 
+Before anything is committed, remove the author's address that Spectra wrote into the change metadata, as [`references/spec-wrapper.md`](../../references/spec-wrapper.md) step 3 does (#611): run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"` and print the files it cleaned. Anything other than `ok` stops the run.
+
 #### Step 3b.4: Apply
+
+If the change is parked, unpark it first (`spectra unpark "<change-name>"`). Then run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"` before `spectra-apply`, as [`references/spec-wrapper.md`](../../references/spec-wrapper.md) step 4 does (#611). `spectra park` moves a change out of the working tree, so the run after propose may not have seen it. Anything other than `ok` stops the run.
 
 ```bash
 APPLY_ARGS="<change-name from Step 3b.3>
@@ -1065,7 +1069,7 @@ fi
 
 #### Step 3b.6: Spec close-out 與 Implementation Complete（#480）
 
-`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → commit `chore: archive <change> (#N)` → `spec-change.py" links --base <這條 branch 與剛 fetch 的預設 branch（FETCH_HEAD）的 merge-base>`（契約第 5 步那段；程式 repo 沒有 remote、用 `spec_archive` 指到本機 branch 時，起點改由 `spec-change.py link-base` 給，#547） → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
+`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → `spec-change.py" scrub-authors`（#611）→ commit `chore: archive <change> (#N)` → `spec-change.py" links --base <這條 branch 與剛 fetch 的預設 branch（FETCH_HEAD）的 merge-base>`（契約第 5 步那段；程式 repo 沒有 remote、用 `spec_archive` 指到本機 branch 時，起點改由 `spec-change.py link-base` 給，#547） → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
 
 通過之後貼 Implementation Complete（經 `gh-egress.sh`），讓 `idd-verify` 與 `idd-close` 讀得到這張 issue 的宣告：
 
@@ -1272,7 +1276,7 @@ while True:
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
-**修正也留下規格（#480）**：宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）時，修正就是補上規格：照契約第 7 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。其餘情況：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數）：propose 之前先貼一則 `## Implementation Plan (fix round <k>)`，寫 `**Spec plan**: change idd-<N>-fix<k>`，再用輕量形式 propose 與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
+**修正也留下規格（#480）**：宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）時，修正就是補上規格：照契約第 7 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。其餘情況：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數）：propose 之前先貼一則 `## Implementation Plan (fix round <k>)`，寫 `**Spec plan**: change idd-<N>-fix<k>`，再用輕量形式 propose（propose 之後照第 3 步跑 `scrub-authors`，#611）與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
 
 **乾淨的定義（#392，2026-11-10 的決定）**：gate 判 `clean` ＝ 報告判定 PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3。這些沒擋住 merge 的列數在 gate JSON 的 `low_in_scope`。大於 0 時：
 
