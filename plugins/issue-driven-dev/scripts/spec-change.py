@@ -84,9 +84,12 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       unchanged; an error while writing or staging names the files already rewritten. A file whose staged copy
       differs from HEAD is staged again after it is rewritten. Only the working copy is read: a staged copy
       whose working copy is deleted or already has no address is not checked, and a working copy that matches
-      HEAD is left alone. Ignored files and symbolic links are not read. A file with a merge conflict, or a
-      directory under changes/ that cannot be read, is an error. A rewrite goes through a new file, so a hard
-      link to the old one keeps its bytes.
+      HEAD is left alone. Ignored files and symbolic links are not read, and neither is a file git status
+      does not report (assume-unchanged, or equal to HEAD after line-ending conversion), since `git add`
+      does not take it either. A missing or symlinked changes/ has nothing to scan. A file with a merge
+      conflict, a directory under changes/ that cannot be read, or an unreadable HEAD copy is an error. A
+      rewrite goes through a new file, so a hard link to the old one keeps its bytes. After staging again,
+      the staged copy is read back and must hold no address.
       {"status": "ok", "cleaned": [<paths relative to the repository top, sorted>]} or
       {"status": "error", "reason": "..."}
       exit 0 (ok), 2 (error)
@@ -1187,8 +1190,16 @@ def cmd_scrub_authors(argv):
             raise Fail(f"cannot read {os.path.relpath(exc.filename, top) if exc.filename else 'a directory'} "
                        f"under {sd}/changes: {exc.strerror or exc}")
 
-        for _ in os.walk(changes, onerror=unreadable):   # git status skips a directory it cannot open
-            pass
+        try:
+            root = os.lstat(changes)
+        except FileNotFoundError:
+            root = None   # no changes/ directory: nothing to scan
+        except OSError as exc:
+            raise Fail(f"cannot read {sd}/changes: {exc.strerror or exc}")
+        if root is not None and stat.S_ISDIR(root.st_mode):   # a symlink at changes/ is not followed
+            for _ in os.walk(changes, onerror=unreadable):   # git status skips a directory it cannot open
+                pass
+        has_head = git(top, "rev-parse", "--verify", "-q", "HEAD^{commit}", check=False).returncode == 0
         # Read and check every file before rewriting any, so an error leaves them all as they were.
         plan = []
         for rel, staged in sorted(set(paths)):
@@ -1204,13 +1215,17 @@ def cmd_scrub_authors(argv):
                     raw = fh.read()
             except OSError as exc:
                 raise Fail(f"cannot read {rel}: {exc.strerror or exc}")
+            if has_head and git(top, "ls-tree", "-z", "HEAD", "--", rel).stdout:
+                head = git(top, "show", f"HEAD:{rel}", check=False)
+                if head.returncode != 0:
+                    raise Fail(f"cannot read HEAD's copy of {rel}: "
+                               f"{head.stderr.decode('utf-8', 'replace').strip()[:200]}")
+                if head.stdout == raw:
+                    continue   # the working copy matches HEAD; the requirement leaves it unchanged
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
                 raise Fail(f"{rel} is not UTF-8")
-            head = git(top, "show", f"HEAD:{rel}", check=False)
-            if head.returncode == 0 and head.stdout == raw:
-                continue   # the working copy matches HEAD; the requirement leaves it unchanged
             new, changed = scrub_author_lines(text)
             if changed:
                 plan.append((rel, full, new, staged, info.st_mode))
@@ -1238,6 +1253,11 @@ def cmd_scrub_authors(argv):
                 if p.returncode != 0:
                     raise Fail(f"rewrote {rel} but could not stage it again: "
                                f"{p.stderr.decode('utf-8', 'replace').strip()[:200]}{done}")
+                staged_copy = git(top, "show", f":{rel}", check=False)
+                if staged_copy.returncode != 0 or scrub_author_lines(
+                        staged_copy.stdout.decode("utf-8", "replace"))[1]:
+                    raise Fail(f"rewrote {rel}, but its staged copy still holds an address "
+                               f"(a clean filter?){done}")
             cleaned.append(rel)
         return emit({"status": "ok", "cleaned": cleaned}, 0)
     except Fail as exc:
