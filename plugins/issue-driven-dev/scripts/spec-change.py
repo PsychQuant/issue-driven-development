@@ -1161,11 +1161,38 @@ def scrub_author_lines(text):
     return bom + "".join(out), changed
 
 
+def _no_symlinked_dirs(root, directory):
+    """Whether every directory from root down to directory is a real directory, not a symlink."""
+    rel = os.path.relpath(directory, root)
+    if rel == "." :
+        return True
+    if rel.startswith(".."):
+        return False
+    here = root
+    for part in rel.split(os.sep):
+        here = os.path.join(here, part)
+        try:
+            if not stat.S_ISDIR(os.lstat(here).st_mode):
+                return False
+        except OSError:
+            return False
+    return True
+
+
 def cmd_scrub_authors(argv):
     args = parse(argv, ("--cwd",), ("--cwd",))
     try:
         top = repo_top(args["--cwd"])
         sd = spec_dir_worktree(top)
+        changes = os.path.join(top, sd, "changes")
+        try:
+            root = os.lstat(changes)
+        except FileNotFoundError:
+            return emit({"status": "ok", "cleaned": []}, 0)   # no changes/ directory: nothing to scan
+        except OSError as exc:
+            raise Fail(f"cannot read {sd}/changes: {exc.strerror or exc}")
+        if not stat.S_ISDIR(root.st_mode):   # a symlink (or a file) at changes/ is not followed
+            return emit({"status": "ok", "cleaned": []}, 0)
         p = git(top, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", f"{sd}/changes")
         entries = p.stdout.split(b"\x00")
         paths, i = [], 0
@@ -1184,26 +1211,19 @@ def cmd_scrub_authors(argv):
             if "D" in xy:
                 continue
             paths.append((path, xy[0] not in " ?"))   # second: the index holds a copy that differs from HEAD
-        changes = os.path.join(top, sd, "changes")
-
         def unreadable(exc):
             raise Fail(f"cannot read {os.path.relpath(exc.filename, top) if exc.filename else 'a directory'} "
                        f"under {sd}/changes: {exc.strerror or exc}")
 
-        try:
-            root = os.lstat(changes)
-        except FileNotFoundError:
-            root = None   # no changes/ directory: nothing to scan
-        except OSError as exc:
-            raise Fail(f"cannot read {sd}/changes: {exc.strerror or exc}")
-        if root is not None and stat.S_ISDIR(root.st_mode):   # a symlink at changes/ is not followed
-            for _ in os.walk(changes, onerror=unreadable):   # git status skips a directory it cannot open
-                pass
+        for _ in os.walk(changes, onerror=unreadable):   # git status skips a directory it cannot open
+            pass
         has_head = git(top, "rev-parse", "--verify", "-q", "HEAD^{commit}", check=False).returncode == 0
         # Read and check every file before rewriting any, so an error leaves them all as they were.
         plan = []
         for rel, staged in sorted(set(paths)):
             full = os.path.join(top, rel)
+            if not _no_symlinked_dirs(changes, os.path.dirname(full)):
+                continue   # a symlinked directory on the way: not read, like a symlinked file
             try:
                 info = os.lstat(full)
             except OSError as exc:
@@ -1254,8 +1274,14 @@ def cmd_scrub_authors(argv):
                     raise Fail(f"rewrote {rel} but could not stage it again: "
                                f"{p.stderr.decode('utf-8', 'replace').strip()[:200]}{done}")
                 staged_copy = git(top, "show", f":{rel}", check=False)
-                if staged_copy.returncode != 0 or scrub_author_lines(
-                        staged_copy.stdout.decode("utf-8", "replace"))[1]:
+                if staged_copy.returncode != 0:
+                    raise Fail(f"rewrote and staged {rel} but could not read the staged copy back: "
+                               f"{staged_copy.stderr.decode('utf-8', 'replace').strip()[:200]}{done}")
+                try:
+                    staged_text = staged_copy.stdout.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise Fail(f"rewrote {rel}, but its staged copy is not UTF-8 (a clean filter?){done}")
+                if scrub_author_lines(staged_text)[1]:
                     raise Fail(f"rewrote {rel}, but its staged copy still holds an address "
                                f"(a clean filter?){done}")
             cleaned.append(rel)

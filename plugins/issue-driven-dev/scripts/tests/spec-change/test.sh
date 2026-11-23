@@ -1657,6 +1657,28 @@ newrepo sa-nochanges; put openspec/specs/cap/spec.md 'x'; commit >/dev/null
 run scrub-authors --cwd "$REPO"
 assert_eq "scrub-authors: no changes/ directory → ok" ok "$(printf '%s' "$OUT" | field status)"
 assert_eq "… and nothing listed" "[]" "$(printf '%s' "$OUT" | field cleaned)"
+# The staged entry is marked assume-unchanged, so git status still reports it after its directory becomes a symlink.
+mkdir -p "$WORK/sa-outside/c" "$REPO/openspec/changes/c" || setup_failed "create the directories"
+meta "$SA_ADDR" > "$WORK/sa-outside/c/.openspec.yaml"; SA_OUT=$(cksum < "$WORK/sa-outside/c/.openspec.yaml")
+meta "$SA_ADDR" > "$REPO/openspec/changes/c/.openspec.yaml"
+git -C "$REPO" add openspec/changes/c/.openspec.yaml && git -C "$REPO" update-index --assume-unchanged openspec/changes/c/.openspec.yaml \
+  || setup_failed "stage the entry and mark it assume-unchanged"
+rm -rf "$REPO/openspec/changes" && ln -s "$WORK/sa-outside" "$REPO/openspec/changes" || setup_failed "make the symlinked changes/"
+git -C "$REPO" status --porcelain -- openspec/changes | grep -q 'openspec/changes/c/.openspec.yaml' || setup_failed "git status must still report the staged entry"
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors: a symlinked changes/ → ok" ok "$(printf '%s' "$OUT" | field status)"
+assert_eq "… and nothing listed" "[]" "$(printf '%s' "$OUT" | field cleaned)"
+assert_eq "… and the file outside the repository is unchanged" "$SA_OUT" "$(cksum < "$WORK/sa-outside/c/.openspec.yaml")"
+newrepo sa-subdir-link; mkdir -p "$WORK/sa-outside2/d" "$REPO/openspec/changes/d" || setup_failed "create the directories"
+meta "$SA_ADDR" > "$WORK/sa-outside2/d/.openspec.yaml"; SA_OUT2=$(cksum < "$WORK/sa-outside2/d/.openspec.yaml")
+meta "$SA_ADDR" > "$REPO/openspec/changes/d/.openspec.yaml"
+git -C "$REPO" add openspec/changes/d/.openspec.yaml && git -C "$REPO" update-index --assume-unchanged openspec/changes/d/.openspec.yaml \
+  || setup_failed "stage the entry and mark it assume-unchanged"
+rm -rf "$REPO/openspec/changes/d" && ln -s "$WORK/sa-outside2/d" "$REPO/openspec/changes/d" || setup_failed "make the symlinked subdirectory"
+git -C "$REPO" status --porcelain -- openspec/changes | grep -q 'openspec/changes/d/.openspec.yaml' || setup_failed "git status must still report the staged entry"
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors: a symlinked directory below changes/ → ok" ok "$(printf '%s' "$OUT" | field status)"
+assert_eq "… and the file behind it is unchanged" "$SA_OUT2" "$(cksum < "$WORK/sa-outside2/d/.openspec.yaml")"
 mkdir -p "$WORK/sa-not-git" || setup_failed "create a directory that is not a repository"
 run scrub-authors --cwd "$WORK/sa-not-git"
 assert_eq "scrub-authors: not a git repository → error" error "$(printf '%s' "$OUT" | field status)"
