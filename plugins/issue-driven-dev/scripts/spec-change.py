@@ -74,6 +74,15 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       {"status": remote|ok|error, "base": "<commit>", "from": baseline-tag|first-commit, "reason": "..."}
       exit 0 (remote, ok), 2 (error)
 
+  scrub-authors --cwd <dir>                                                     (#611)
+      Remove the author's address from change metadata before it is committed. In every .openspec.yaml under
+      openspec/changes/ that is untracked or differs from HEAD (staged or not; ignored files are not read), a
+      `created_by:` or `archived_by:` line whose value ends in an angle-bracketed part holding an @ keeps the
+      field and the name only. Other lines, and files without such a line, stay byte-identical; a file that is
+      not a regular file (a symbolic link) is not read. The spec directory is read from the working tree.
+      {"status": ok|error, "cleaned": [<paths relative to the repository top, sorted>], "reason": "..."}
+      exit 0 (ok), 2 (error)
+
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
 .spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
 
@@ -82,6 +91,7 @@ Anything that cannot be read or decided is `error` (exit 2), never `ok` or `pass
 import json
 import os
 import re
+import stat
 import shutil
 import subprocess
 import sys
@@ -1118,12 +1128,78 @@ def cmd_link_base(argv):
         return emit({"status": "error", "reason": str(exc)}, 2)
 
 
+AUTHOR_LINE_RE = re.compile(r"^(created_by|archived_by):[ \t]*(.*?)[ \t]*<[^<>\r\n]*@[^<>\r\n]*>[ \t]*$")
+LINE_END_RE = re.compile(r"(\r\n|\r|\n)$")
+
+
+def scrub_author_lines(text):
+    """The text with the address removed from created_by and archived_by lines, and whether anything changed."""
+    out, changed = [], False
+    for line in text.splitlines(keepends=True):
+        m_end = LINE_END_RE.search(line)
+        end = m_end.group(1) if m_end else ""
+        body = line[: len(line) - len(end)]
+        m = AUTHOR_LINE_RE.match(body)
+        if m:
+            name = m.group(2)
+            body = f"{m.group(1)}: {name}" if name else f"{m.group(1)}:"
+            changed = True
+        out.append(body + end)
+    return "".join(out), changed
+
+
+def cmd_scrub_authors(argv):
+    args = parse(argv, ("--cwd",), ("--cwd",))
+    try:
+        top = repo_top(args["--cwd"])
+        sd = spec_dir_worktree(top)
+        p = git(top, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", f"{sd}/changes")
+        entries = p.stdout.split(b"\x00")
+        paths, i = [], 0
+        while i < len(entries):
+            rec = entries[i]
+            i += 1
+            if len(rec) < 4:
+                continue
+            xy, path = rec[:2].decode("ascii", "replace"), os.fsdecode(rec[3:])
+            if "R" in xy or "C" in xy:
+                i += 1   # a rename or copy carries the old path next
+            if "D" in xy:
+                continue
+            if os.path.basename(path) == ".openspec.yaml":
+                paths.append(path)
+        cleaned = []
+        for rel in sorted(set(paths)):
+            full = os.path.join(top, rel)
+            try:
+                info = os.lstat(full)
+            except OSError as exc:
+                raise Fail(f"cannot read {rel}: {exc.strerror or exc}")
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            with open(full, "rb") as fh:
+                raw = fh.read()
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise Fail(f"{rel} is not UTF-8")
+            new, changed = scrub_author_lines(text)
+            if changed:
+                with open(full, "wb") as fh:
+                    fh.write(new.encode("utf-8"))
+                cleaned.append(rel)
+        return emit({"status": "ok", "cleaned": cleaned}, 0)
+    except Fail as exc:
+        return emit({"status": "error", "cleaned": [], "reason": str(exc)}, 2)
+
+
 def main(argv):
     handlers = {"declared": cmd_declared, "archived": cmd_archived, "links": cmd_links, "preflight": cmd_preflight,
-                "ic": cmd_ic, "plan": cmd_plan, "archive-ref": cmd_archive_ref, "link-base": cmd_link_base}
+                "ic": cmd_ic, "plan": cmd_plan, "archive-ref": cmd_archive_ref, "link-base": cmd_link_base,
+                "scrub-authors": cmd_scrub_authors}
     if not argv or argv[0] not in handlers:
         print("spec-change: subcommand required: declared | archived | links | preflight | ic | plan | archive-ref | "
-              "link-base", file=sys.stderr)
+              "link-base | scrub-authors", file=sys.stderr)
         return 64
     try:
         return handlers[argv[0]](argv[1:])

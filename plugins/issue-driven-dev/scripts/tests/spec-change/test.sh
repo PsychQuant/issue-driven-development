@@ -20,6 +20,9 @@
 # spec-example: spec-on-every-issue / spec directory by .spectra.yaml
 # spec-example: spec-on-every-issue / choosing the Implementation Complete comment
 # spec-example: spec-on-every-issue / reading the Spec plan line
+# spec-example: spec-on-every-issue / lines of change metadata before and after
+# spec-example: spec-on-every-issue / which files scrub-authors reads
+# spec-example: spec-on-every-issue / the wrapper's two calls
 #
 # Fixture specs below use the made-up capability `cap`, so the markers inside
 # them never name a real Example.
@@ -1497,6 +1500,83 @@ pf_repo pf-hint no yes
 OUT=$(PATH="$BIN_WITHOUT" "$PY" "$SC" preflight --cwd "$TREE" --can-write yes 2>"$WORK/err")
 assert_grep "preflight: install-spectra names the command that installs Spectra (idd-480-fix5)" "brew install --cask spectra-app" "$(printf '%s' "$OUT" | field message)"
 assert_grep "… and the project's address" "github.com/kaochenlong/spectra-app" "$(printf '%s' "$OUT" | field message)"
+
+echo "spec-change: scrub-authors (Example: lines of change metadata before and after)"
+meta() { # line → the .openspec.yaml text that holds it, as the tests write it
+  printf 'schema: spec-driven\ncreated: 2026-01-01\n%s\ncreated_with: claude\n' "$1"
+}
+scrub_line_case() { # label line-before line-after listed(yes|no)
+  newrepo "sa-$RANDOM$RANDOM"
+  SA_F="openspec/changes/c/.openspec.yaml"
+  mkdir -p "$REPO/openspec/changes/c" || setup_failed "create change directory"
+  meta "$2" > "$REPO/$SA_F"
+  SA_BEFORE=$(cksum < "$REPO/$SA_F")
+  run scrub-authors --cwd "$REPO"
+  assert_eq "scrub-authors: $1 → ok" ok "$(printf '%s' "$OUT" | field status)"
+  assert_exit "scrub-authors: $1 → exit 0" 0 "$RC"
+  if [ "$4" = yes ]; then
+    meta "$3" > "$WORK/sa-expected"
+    require "scrub-authors: $1 → the file holds the line after" cmp -s "$WORK/sa-expected" "$REPO/$SA_F"
+    assert_eq "scrub-authors: $1 → listed" "[\"$SA_F\"]" "$(printf '%s' "$OUT" | field cleaned)"
+  else
+    assert_eq "scrub-authors: $1 → byte-identical" "$SA_BEFORE" "$(cksum < "$REPO/$SA_F")"
+    assert_eq "scrub-authors: $1 → not listed" "[]" "$(printf '%s' "$OUT" | field cleaned)"
+  fi
+}
+scrub_line_case "created_by with an address" 'created_by: t <t@example.test>' 'created_by: t' yes
+scrub_line_case "archived_by with an address" 'archived_by: t <t@example.test>' 'archived_by: t' yes
+scrub_line_case "created_by without an address" 'created_by: t' '' no
+scrub_line_case "a name that holds angle brackets" 'created_by: a <b> c <x@example.test>' 'created_by: a <b> c' yes
+scrub_line_case "angle brackets without an @" 'created_by: t <no-address>' '' no
+scrub_line_case "another field with an address" 'owner: t <t@example.test>' '' no
+
+echo "spec-change: scrub-authors (Example: which files scrub-authors reads)"
+SA_ADDR='created_by: t <t@example.test>'
+newrepo sa-files
+mkdir -p "$REPO/openspec/changes/archive/2026-01-01-old" "$REPO/openspec/changes/archive/2026-01-02-y" \
+  || setup_failed "create archive directories"
+meta "$SA_ADDR" > "$REPO/openspec/changes/archive/2026-01-01-old/.openspec.yaml"
+meta 'created_by: t' > "$REPO/openspec/changes/archive/2026-01-02-y/.openspec.yaml"
+commit >/dev/null
+meta "$SA_ADDR" > "$REPO/openspec/changes/archive/2026-01-02-y/.openspec.yaml"
+mkdir -p "$REPO/openspec/changes/new-x" "$REPO/notes" || setup_failed "create change and notes directories"
+meta "$SA_ADDR" > "$REPO/openspec/changes/new-x/.openspec.yaml"
+meta "$SA_ADDR" > "$REPO/notes/.openspec.yaml"
+SA_OLD=$(cksum < "$REPO/openspec/changes/archive/2026-01-01-old/.openspec.yaml")
+SA_NOTES=$(cksum < "$REPO/notes/.openspec.yaml")
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors files: ok" ok "$(printf '%s' "$OUT" | field status)"
+assert_eq "scrub-authors files: the modified and the untracked file are listed, sorted" \
+  '["openspec/changes/archive/2026-01-02-y/.openspec.yaml", "openspec/changes/new-x/.openspec.yaml"]' \
+  "$(printf '%s' "$OUT" | field cleaned)"
+meta 'created_by: t' > "$WORK/sa-expected"
+require "scrub-authors files: untracked → rewritten" cmp -s "$WORK/sa-expected" "$REPO/openspec/changes/new-x/.openspec.yaml"
+require "scrub-authors files: committed, modified → rewritten" cmp -s "$WORK/sa-expected" "$REPO/openspec/changes/archive/2026-01-02-y/.openspec.yaml"
+assert_eq "scrub-authors files: committed and unchanged → left as is" "$SA_OLD" "$(cksum < "$REPO/openspec/changes/archive/2026-01-01-old/.openspec.yaml")"
+assert_eq "scrub-authors files: outside the spec directory → left as is" "$SA_NOTES" "$(cksum < "$REPO/notes/.openspec.yaml")"
+newrepo sa-specdir; put .spectra.yaml 'spec_dir: docs/spectra'; commit >/dev/null
+mkdir -p "$REPO/docs/spectra/changes/z" || setup_failed "create docs/spectra change directory"
+meta "$SA_ADDR" > "$REPO/docs/spectra/changes/z/.openspec.yaml"
+run scrub-authors --cwd "$REPO"
+assert_eq "scrub-authors files: spec_dir docs/spectra → its change is listed" \
+  '["docs/spectra/changes/z/.openspec.yaml"]' "$(printf '%s' "$OUT" | field cleaned)"
+mkdir -p "$WORK/sa-not-git" || setup_failed "create a directory that is not a repository"
+run scrub-authors --cwd "$WORK/sa-not-git"
+assert_eq "scrub-authors: not a git repository → error" error "$(printf '%s' "$OUT" | field status)"
+assert_exit "scrub-authors: not a git repository → exit 2" 2 "$RC"
+
+echo "spec-change: scrub-authors (Example: the wrapper's two calls)"
+SA_WRAP="$HERE/../../../references/spec-wrapper.md"
+SA_S3=$(sed -n '/^## 3\. Propose/,/^## 4\. /p' "$SA_WRAP")
+SA_S5=$(sed -n '/^## 5\. Close-out/,/^## 6\. /p' "$SA_WRAP")
+SA_CALL='spec-change.py" scrub-authors --cwd "$CWD"'
+assert_grep "the wrapper's step 3 runs scrub-authors" "$SA_CALL" "$SA_S3"
+assert_grep "the wrapper's step 5 runs scrub-authors" "$SA_CALL" "$SA_S5"
+SA_L_ARCH=$(printf '%s\n' "$SA_S5" | grep -n 'spectra archive' | head -1 | cut -d: -f1)
+SA_L_CALL=$(printf '%s\n' "$SA_S5" | grep -nF "$SA_CALL" | head -1 | cut -d: -f1)
+SA_L_COMMIT=$(printf '%s\n' "$SA_S5" | grep -n 'chore: archive' | head -1 | cut -d: -f1)
+assert_true "… in step 5 after spectra archive and before the archive commit" \
+  "[ -n '$SA_L_CALL' ] && [ '${SA_L_ARCH:-0}' -lt '${SA_L_CALL:-0}' ] && [ '${SA_L_CALL:-0}' -lt '${SA_L_COMMIT:-0}' ]"
 
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"

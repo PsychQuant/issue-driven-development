@@ -110,6 +110,8 @@ is_unattended "$CWD" && echo "→ spec wrapper: unattended" || echo "→ spec wr
 
 `spectra-propose` 結束時可能會 park 這個 change；第 4 步由 wrapper 自己 unpark，不交給 `spectra-apply` 去問。
 
+propose 之後、任何 commit 之前，拿掉 Spectra 寫進 change metadata 的作者 email（#611）：跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`。它只改規格目錄 `changes/` 底下未追蹤或與 HEAD 不同的 `.openspec.yaml`，把 `created_by`、`archived_by` 行尾 `<…@…>` 的部分拿掉、名字留著，其他位元組不動。印 `ok` 時，`cleaned` 有檔案就印 `→ spec metadata: removed the author's address from <檔案>`，沒有就印 `→ spec metadata: no address found`；印其他結果就停下回報，不 commit。每個 repo 都跑，不看它公開或私有。
+
 ## 4. Apply
 
 ```bash
@@ -125,7 +127,7 @@ fi
 
 1. `Skill(skill="spectra-verify", args="<change 名稱>")`。回報 critical 就修；修不了就停下回報，不封存。
 2. `spectra archive <change 名稱> -y`。
-3. 確認封存落在要 commit 的這個工作樹：`openspec/changes/<change 名稱>/` 不見了，`openspec/changes/archive/` 底下多了 `<日期>-<change 名稱>`。沒有就停下。
+3. 確認封存落在要 commit 的這個工作樹：`openspec/changes/<change 名稱>/` 不見了，`openspec/changes/archive/` 底下多了 `<日期>-<change 名稱>`。沒有就停下。確認之後跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`，拿掉 `spectra archive` 寫進 `archived_by` 的 email（#611），印法與第 3 步相同；不是 `ok` 就停下，不 commit。
 4. commit：`chore: archive <change 名稱> (#N)`。
 5. 連結檢查：
 
