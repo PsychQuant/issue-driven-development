@@ -80,8 +80,10 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       `created_by:` or `archived_by:` line whose value ends in an angle-bracketed part holding an @ keeps the
       field and the name only. Other lines, and files without such a line, stay byte-identical; a file that is
       not a regular file (a symbolic link) is not read. The spec directory is read from the working tree.
-      Every file is read and checked before any is rewritten, so an error leaves them all unchanged; a file
-      whose staged copy differs from HEAD is staged again after it is rewritten.
+      Every file is read and checked before any is rewritten, so an error found while reading leaves them all
+      unchanged; an error while writing or staging names the files already rewritten. A file whose staged copy
+      differs from HEAD is staged again after it is rewritten. Only the working copy is read: a staged copy
+      whose working copy is deleted or already has no address is not checked.
       {"status": "ok", "cleaned": [<paths relative to the repository top, sorted>]} or
       {"status": "error", "reason": "..."}
       exit 0 (ok), 2 (error)
@@ -1181,8 +1183,11 @@ def cmd_scrub_authors(argv):
                 raise Fail(f"cannot read {rel}: {exc.strerror or exc}")
             if not stat.S_ISREG(info.st_mode):
                 continue
-            with open(full, "rb") as fh:
-                raw = fh.read()
+            try:
+                with open(full, "rb") as fh:
+                    raw = fh.read()
+            except OSError as exc:
+                raise Fail(f"cannot read {rel}: {exc.strerror or exc}")
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
@@ -1192,13 +1197,17 @@ def cmd_scrub_authors(argv):
                 plan.append((rel, full, new, staged))
         cleaned = []
         for rel, full, new, staged in plan:
-            with open(full, "wb") as fh:
-                fh.write(new.encode("utf-8"))
+            done = f" (already rewritten: {', '.join(cleaned)})" if cleaned else ""
+            try:
+                with open(full, "wb") as fh:
+                    fh.write(new.encode("utf-8"))
+            except OSError as exc:
+                raise Fail(f"cannot write {rel}: {exc.strerror or exc}{done}")
             if staged:   # the next commit takes the staged copy, so stage the rewritten one
-                p = git(top, "add", "--", rel)
+                p = git(top, "add", "--", rel, check=False)
                 if p.returncode != 0:
                     raise Fail(f"rewrote {rel} but could not stage it again: "
-                               f"{p.stderr.decode('utf-8', 'replace').strip()}")
+                               f"{p.stderr.decode('utf-8', 'replace').strip()[:200]}{done}")
             cleaned.append(rel)
         return emit({"status": "ok", "cleaned": cleaned}, 0)
     except Fail as exc:

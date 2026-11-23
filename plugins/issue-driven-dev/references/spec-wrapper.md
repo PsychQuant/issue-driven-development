@@ -110,7 +110,7 @@ is_unattended "$CWD" && echo "→ spec wrapper: unattended" || echo "→ spec wr
 
 `spectra-propose` 結束時可能會 park 這個 change；第 4 步由 wrapper 自己 unpark，不交給 `spectra-apply` 去問。
 
-propose 之後、或印 `go on with` 沿用開著的 change 時，在任何 commit 之前拿掉 Spectra 寫進 change metadata 的作者 email（#611）：跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`。它只改規格目錄 `changes/` 底下未追蹤或與 HEAD 不同的 `.openspec.yaml`，把 `created_by`、`archived_by` 行尾 `<…@…>` 的部分拿掉、名字留著，其他位元組不動；已經 stage 的檔改完會再 stage 一次，暫存區不留舊的地址；先讀完、檢查完所有檔才寫，回報 error 時一個檔都沒改。印 `ok` 時，`cleaned` 有檔案就印 `→ spec metadata: removed the author's address from <檔案>`，沒有就印 `→ spec metadata: no address found`；印其他結果就停下回報，不 commit。每個 repo 都跑，不看它公開或私有。
+propose 之後、或印 `go on with` 沿用開著的 change 時，在任何 commit 之前拿掉 Spectra 寫進 change metadata 的作者 email（#611）：跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"`。它只改規格目錄 `changes/` 底下未追蹤或與 HEAD 不同的 `.openspec.yaml`，把 `created_by`、`archived_by` 行尾 `<…@…>` 的部分拿掉、名字留著，其他位元組不動；已經 stage 的檔改完會再 stage 一次，暫存區不留舊的地址；先讀完、檢查完所有檔才寫，讀檔或檢查時出錯就一個檔都不改，寫檔或重新 stage 時出錯則在訊息裡列出已經改過的檔。印 `ok` 時，`cleaned` 有檔案就印 `→ spec metadata: removed the author's address from <檔案>`，沒有就印 `→ spec metadata: no address found`；印其他結果就停下回報，不 commit。每個 repo 都跑，不看它公開或私有。
 
 ## 4. Apply
 

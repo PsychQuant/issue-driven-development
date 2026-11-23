@@ -1581,6 +1581,15 @@ assert_eq "scrub-authors: a file that is not UTF-8 → error" error "$(printf '%
 assert_exit "scrub-authors: a file that is not UTF-8 → exit 2" 2 "$RC"
 assert_eq "… and the error has no cleaned list" "<missing>" "$(printf '%s' "$OUT" | field cleaned)"
 assert_eq "… and the other file with an address is left unchanged" "$SA_A" "$(cksum < "$REPO/openspec/changes/a/.openspec.yaml")"
+if [ "$(id -u)" != 0 ]; then   # root can read a mode-000 file
+  meta "$SA_ADDR" > "$REPO/openspec/changes/b/.openspec.yaml"; chmod 000 "$REPO/openspec/changes/b/.openspec.yaml"
+  run scrub-authors --cwd "$REPO"
+  chmod 644 "$REPO/openspec/changes/b/.openspec.yaml"
+  assert_eq "scrub-authors: a file that cannot be read → error" error "$(printf '%s' "$OUT" | field status)"
+  assert_exit "scrub-authors: a file that cannot be read → exit 2" 2 "$RC"
+  assert_eq "… and the error has no cleaned list" "<missing>" "$(printf '%s' "$OUT" | field cleaned)"
+  assert_eq "… and the other file with an address is left unchanged" "$SA_A" "$(cksum < "$REPO/openspec/changes/a/.openspec.yaml")"
+fi
 mkdir -p "$WORK/sa-not-git" || setup_failed "create a directory that is not a repository"
 run scrub-authors --cwd "$WORK/sa-not-git"
 assert_eq "scrub-authors: not a git repository → error" error "$(printf '%s' "$OUT" | field status)"
