@@ -129,6 +129,10 @@ def result_path(cwd, n):
     return safe_path(os.path.join(state_dir(cwd), f"idd-all-result-{n}.json"))
 
 
+class Replaced(Stop):
+    """The run state now belongs to another run (#602 verify r1): Phase 4 stops on it and never counts or fixes."""
+
+
 def lock_path(cwd, n):
     return safe_path(os.path.join(state_dir(cwd), f"idd-all-run-{n}.lock"))
 
@@ -220,9 +224,10 @@ def cmd_reset(argv):
     if a is None or not a.get("--cwd") or not os.path.isdir(a["--cwd"]) or not re.match(r"^[0-9]+$", a.get("--issue", "")):
         return usage("reset needs --cwd <dir> --issue <digits>")
     try:
-        for path in (state_path(a["--cwd"], a["--issue"]), result_path(a["--cwd"], a["--issue"])):
-            if os.path.exists(path):
-                os.unlink(path)
+        with state_lock(a["--cwd"], a["--issue"]):    # #602 r1: a gate holding the lock cannot write the record back
+            for path in (state_path(a["--cwd"], a["--issue"]), result_path(a["--cwd"], a["--issue"])):
+                if os.path.exists(path):
+                    os.unlink(path)
     except (Stop, OSError) as exc:
         print(f"close-stage: reset failed: {exc}", file=sys.stderr)
         return 3
@@ -359,6 +364,8 @@ def cmd_gate(argv):
     except Exception as exc:  # fail closed: a round that was not recorded must not read as a judged round
         rc, result = 2, {"status": "unparseable", "reason": f"the round record could not be written: "
                          f"{exc.__class__.__name__}: {exc}", "comment_id": result.get("comment_id")}
+        if isinstance(exc, Replaced):
+            result["replaced"] = True     # #602 r1: Phase 4 stops; this is not a write that failed
     print(json.dumps(result, ensure_ascii=False))
     return rc
 
@@ -424,7 +431,7 @@ def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
     except (KeyError, ValueError, TypeError):
         created = None
     if since is None or created != since or st.get("run_id") != run_id:
-        raise Stop("the run state was replaced while the gate was reading; the result is not recorded")
+        raise Replaced("the run state was replaced while the gate was reading; the result is not recorded")
     rid = result.get("comment_id")
     rounds, attempts = list(st.get("rounds") or []), list(st.get("attempts") or [])
     at = iso(now())
@@ -471,12 +478,14 @@ def cmd_next(argv):
                 with state_lock(a["--cwd"], a["--issue"]):   # #602: re-read under the lock; a replaced run is not written
                     now_st = read_state(a["--cwd"], a["--repo"], a["--issue"])
                     if (now_st.get("run_id"), now_st.get("created_at")) != (st.get("run_id"), st.get("created_at")):
-                        raise Stop("the run state was replaced while next was deciding")
+                        raise Replaced("the run state was replaced while next was deciding")
                     now_st["fix_answers"] = list(now_st.get("fix_answers") or []) + [fix_key(st)]
                     write_state(a["--cwd"], a["--issue"], now_st)
             except Exception as exc:
                 answer = dict(answer, decision="stop", merge=False, decided=False,
                               reason=f"the fix answer could not be recorded ({exc.__class__.__name__}: {exc})")
+                if isinstance(exc, Replaced):
+                    answer["replaced"] = True
     except Stop as exc:
         answer = dict(unknown, reason=f"no readable run state: {exc}")
     except Exception as exc:  # fail closed: a surprise is a stop without a merge, never "fix"

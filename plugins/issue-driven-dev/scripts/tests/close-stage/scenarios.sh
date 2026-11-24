@@ -1147,5 +1147,104 @@ ln -s "$S/real-state.json" "$C/.claude/.idd/state/idd-all-run-7.json"
 gate_run
 assert_exit "gate: a symlinked run state is unparseable (exit 2)" 2 "$RC"
 assert_eq "gate: … with a JSON answer" unparseable "$(printf '%s' "$G" | field status)"
+# #602 r1 #11: after a gate that could not write the record, next is undecided
+next_run
+assert_eq "next: after a gate that could not write → decided is false" False "$(nx decided)"
+restore_state() { rm -f "$C/.claude/.idd/state/idd-all-run-7.json"; mv "$S/real-state.json" "$C/.claude/.idd/state/idd-all-run-7.json"; }
+restore_state
+# spec-example: idd-pr-hitl-modes / replaced is marked and stops the run
+# #602 r1 #3/#4: a run replaced while the gate reads is marked replaced, so Phase 4 stops instead of fixing
+pr_scenario stop-gate-replaced-flag
+RP=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 - "$CS" "$C" "$REPO" "$N" "$SHA" "$(base_of "$SHA")" <<'PY'
+import importlib.util, io, json, sys, contextlib
+cs, cwd, repo, n, sha, base = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+real = m.run_identity
+def stale(c, i):
+    ident = real(c, i); ident["run_id"] = "the-run-this-gate-started-for"; return ident
+m.run_identity = stale
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    rc = m.cmd_gate(["--cwd", cwd, "--repo", repo, "--issue", n, "--sha", sha, "--base", base])
+print(rc, json.loads(out.getvalue()).get("replaced"), json.loads(out.getvalue())["status"])
+PY
+)
+assert_eq "gate: a run replaced while it read → unparseable and replaced" "2 True unparseable" "$RP"
+pr_scenario stop-next-replaced-flag
+write_rounds exhaustive-blocking unattended no "2,0,0"
+NR=$(python3 - "$CS" "$C" "$REPO" "$N" <<'PY'
+import importlib.util, io, json, sys, contextlib
+cs, cwd, repo, n = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+real = m.read_state; calls = []
+def second_differs(c, r, i):
+    st = real(c, r, i); calls.append(1)
+    if len(calls) > 1: st = dict(st, run_id="another-run")
+    return st
+m.read_state = second_differs
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    rc = m.cmd_next(["--cwd", cwd, "--repo", repo, "--issue", n])
+a = json.loads(out.getvalue()); print(rc, a["decision"], a.get("replaced"), a["decided"])
+PY
+)
+assert_eq "next: a run replaced while it decided → stop, replaced, undecided" "3 stop True False" "$NR"
+# #602 r1 #6: init and next's fix answer take the lock
+pr_scenario stop-lock-writers
+LW=$(python3 - "$CS" "$C" "$REPO" "$N" <<'PY'
+import importlib.util, io, sys, contextlib
+cs, cwd, repo, n = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+taken = []; real = m.state_lock
+def spy(*a, **k):
+    taken.append(1); return real(*a, **k)
+m.state_lock = spy
+with contextlib.redirect_stdout(io.StringIO()):
+    m.cmd_init(["--cwd", cwd, "--repo", repo, "--issue", n, "--path", "PR", "--requested-path", "PR", "--interaction", "unattended",
+                "--branch", "b", "--default", "main", "--review", "no", "--in-chain", "no", "--stop", "exhaustive-blocking"])
+init_locks = len(taken)
+import json
+p = m.state_path(cwd, n); st = json.load(open(p))
+st["rounds"] = [{"round": 1, "sha": "a" * 40, "status": "not_clean", "blocking": 2, "in_scope": 0, "low_in_scope": 0,
+                 "report_id": 9, "at": st["created_at"]}]
+st["attempts"] = [{"sha": "a" * 40, "report_id": 9, "at": st["created_at"]}]
+st["last_gate"] = {"status": "not_clean", "report_id": 9, "sha": "a" * 40, "at": st["created_at"]}; json.dump(st, open(p, "w"))
+with contextlib.redirect_stdout(io.StringIO()):
+    m.cmd_next(["--cwd", cwd, "--repo", repo, "--issue", n])
+with contextlib.redirect_stdout(io.StringIO()):
+    m.cmd_reset(["--cwd", cwd, "--issue", n])
+print(f"init={init_locks} next={len(taken) - init_locks - 1} reset=1" if len(taken) == init_locks + 2 else f"locks={taken} init={init_locks}")
+PY
+)
+assert_eq "lock: init, next's fix answer and reset each take the lock" "init=1 next=1 reset=1" "$LW"
+# #602 r1 #10: a writer waits for a lock held by another process (spec Example, third row)
+pr_scenario stop-lock-waits
+LWAIT=$(python3 - "$CS" "$C" "$REPO" "$N" "$SHA" <<'PY'
+import importlib.util, subprocess, sys, time, json
+cs, cwd, repo, n, sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+hold = ("import fcntl,os,sys,time\nfd=os.open(sys.argv[1], os.O_RDWR|os.O_CREAT, 0o600)\nfcntl.flock(fd, fcntl.LOCK_EX)\n"
+        "print('held', flush=True)\ntime.sleep(1.0)\n")
+p = subprocess.Popen([sys.executable, "-c", hold, m.lock_path(cwd, n)], stdout=subprocess.PIPE, text=True)
+assert p.stdout.readline().strip() == "held"
+ident = m.run_identity(cwd, n); t = time.monotonic()
+m.record_round(cwd, repo, n, {"status": "clean", "comment_id": 5, "blocking": 0, "in_scope": 0}, sha, ident["created_at"], ident["run_id"])
+waited = time.monotonic() - t; p.wait()
+print("waited" if waited >= 0.7 else f"no-wait {waited:.2f}", len(json.load(open(m.state_path(cwd, n)))["rounds"]))
+PY
+)
+assert_eq "lock: a writer waits for a lock another process holds, then writes" "waited 1" "$LWAIT"
+# #602 r1 #7: a verify_stop value that is not null or a mode is refused
+pr_scenario stop-bad-verify-stop
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p)); st["verify_stop"] = "sometimes"; json.dump(st, open(p, "w"))
+PY
+next_run
+assert_eq "next: verify_stop 'sometimes' → stop" stop "$(nx decision)"
+assert_exit "next: … undecided" 3 "$RC"
+assert_grep "next: … and names the value" "'sometimes'" "$(nx reason)"
+NO_PREGATE=1 run_stage
+stop_case "run: a verify_stop value that is not a mode" "not null or one of"
 
 print_summary close-stage
