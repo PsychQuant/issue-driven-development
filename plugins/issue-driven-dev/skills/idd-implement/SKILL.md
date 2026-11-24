@@ -81,7 +81,7 @@ TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Im
 TaskCreate(name="bootstrap_strategy_tasklist", description="Step 2.5: Simple complexity → 為每個 - [ ] bullet 建 TaskCreate; SDD → 跳過(spectra-apply 管)")
 TaskCreate(name="execute_tdd_loop", description="Step 3: pre-flight superpowers（check-plugin-presence.sh 三參數，缺席 fail-fast）→ 對每個 strategy item invoke superpowers:test-driven-development 完成 TDD 執行 → commit (#NNN) → TaskUpdate completed（#209 delegation）")
 TaskCreate(name="scope_guard", description="實作中發現不相關問題 → 開新 issue,不混入本 #NNN")
-TaskCreate(name="spec_closeout", description="Step 4.5 (#480): 有 change 時照 references/spec-wrapper.md 第 5 步收尾：spectra-verify → spectra archive → 確認落在工作樹 → commit → spec-change.py links / archived")
+TaskCreate(name="spec_closeout", description="Step 4.5 (#480): 有 change 時照 references/spec-wrapper.md 第 5 步收尾：spectra-verify → spectra archive → 確認落在工作樹 → spec-change.py scrub-authors → commit → spec-change.py links / archived")
 TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 checklist 狀態寫回 Implementation Complete comment")
 TaskCreate(name="open_pr_if_pr_path", description="Phase 5.5: PR path 才執行 — git push + gh pr create with Refs #NNN body")
 TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + reproduction trace, identify sister bugs / refactor opportunities / TODOs encountered; AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH Implementation Complete comment with `### Sister Bugs Filed` audit trail (per IC_R011 #526)")
@@ -431,6 +431,8 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 > - 從 `idd-plan` 來（args 帶 `--spec-change <名稱>`，核准過的 plan 已寫著 `**Spec plan**: change <名稱>`）→ 不另貼 plan，用這個名稱以輕量形式 propose（args 同上一項）。
 > - change 已經開著（上次 propose 之後中斷，且最新的 plan 寫著同名的 `change`）→ 不再 propose，直接用它。
 >
+> 三種都一樣：在任何 commit 之前，照契約第 3 步跑 `spec-change.py" scrub-authors --cwd "$CWD"`，拿掉 Spectra 寫進 change metadata 的作者 email（#611）。
+>
 > propose 之後（或沿用開著的 change 時），change 的 tasks 寫到哪裡，看最新那則 plan 的標題，只有下面兩種；最新那則 plan 就是 `spec-change.py plan` 讀的那一則，也就是有寫入權的帳號（`OWNER`、`MEMBER`、`COLLABORATOR`）貼的、以 `## Implementation Plan` 開頭的留言裡最新的一則，其他帳號貼的不算。`idd-plan` 與本 skill 用同一個帳號貼留言，分不出哪一則是本 skill 自己貼的，所以看標題（#499）：
 >
 > - 標題是 `## Implementation Plan (Plan tier)`（`idd-plan` 貼、人核准過的那一則）→ 本 skill 不改這則留言。另貼一則留言，第一行 `## Spec tasks (change <名稱>)`，之後照 `tasks.md` 的順序每個 task 一行，不帶 checkbox（進度記在 `tasks.md`）；有寫入權的帳號已經貼過這個標題的留言就不再貼，其他帳號貼的不算。貼法同下面的 Implementation Plan（經 `gh-egress.sh`）。
@@ -568,7 +570,7 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 
 **適用範圍（#209 R1 verify F8）**：pre-flight 針對會走 TDD delegation 的 code 變更項；若本次變更清單**全部**屬下方「IDD 專屬路由例外」（純 prose / `with_skill`），此 pre-flight 可跳過 — 該路由本來就不 invoke superpowers。**注意（F10 → #212 已解）**：pre-flight 現亦查 enabled 狀態 — disabled 會在 pre-flight 即 exit 3 並印 enable 指令；CLI 缺席時 graceful degrade 回磁碟檢查。
 
-> **有 change 時（#480）**：pre-flight 照常跑（superpowers 的 TDD 紀律不變），然後照契約第 4 步：change 被 park 時先 `spectra unpark`，再 `Skill(skill="spectra-apply", args="<change 名稱>")`（無人值守時 args 附上契約第 3 步那一段）逐項做 `tasks.md`：每個 Example 的測試先寫、先看到它失敗，測試檔帶 `spec-example: <capability> / <Example title>` 標記。下面的逐項流程用在沒有 change 的 issue（宣告 `no behaviour change`、`third-party clone`）。
+> **有 change 時（#480）**：pre-flight 照常跑（superpowers 的 TDD 紀律不變），然後照契約第 4 步：change 被 park 時先 `spectra unpark`，再照契約第 4 步跑 `spec-change.py" scrub-authors`（park 會把 change 移出工作樹，#611），然後 `Skill(skill="spectra-apply", args="<change 名稱>")`（無人值守時 args 附上契約第 3 步那一段）逐項做 `tasks.md`：每個 Example 的測試先寫、先看到它失敗，測試檔帶 `spec-example: <capability> / <Example title>` 標記。下面的逐項流程用在沒有 change 的 issue（宣告 `no behaviour change`、`third-party clone`）。
 
 每個變更項依序執行：
 
@@ -621,7 +623,7 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 
 ### Step 4.5: Spec close-out（#480）
 
-有 change 時，在貼 Implementation Complete 之前照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步收尾，順序固定：`spectra-verify` → `spectra archive <名稱> -y` → 確認封存落在這個工作樹 → commit `chore: archive <名稱> (#N)` → `spec-change.py" links` → `spec-change.py" archived --ref HEAD`。任何一步沒過就停下修，不貼 Implementation Complete，不開 PR。
+有 change 時，在貼 Implementation Complete 之前照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步收尾，順序固定：`spectra-verify` → `spectra archive <名稱> -y` → 確認封存落在這個工作樹 → `spec-change.py" scrub-authors`（#611）→ commit `chore: archive <名稱> (#N)` → `spec-change.py" links` → `spec-change.py" archived --ref HEAD`。任何一步沒過就停下修，不貼 Implementation Complete，不開 PR。
 
 沒有 change（`no behaviour change`、`third-party clone`）→ 跳過這一步。
 

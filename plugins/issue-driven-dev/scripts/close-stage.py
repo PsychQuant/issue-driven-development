@@ -68,10 +68,13 @@ involved; workflows.py decides whether a push to the default branch publishes;
 rendered.py reads GitHub's rendering of a comment, shared with verify-gate.py.
 """
 
+import contextlib
+import fcntl
 import json
 import math
 import os
 import re
+import secrets
 import sys
 import tempfile
 import time
@@ -124,6 +127,32 @@ def state_path(cwd, n):
 
 def result_path(cwd, n):
     return safe_path(os.path.join(state_dir(cwd), f"idd-all-result-{n}.json"))
+
+
+class Replaced(Stop):
+    """The run state now belongs to another run (#602 verify r1): Phase 4 stops on it and never counts or fixes."""
+
+
+def lock_path(cwd, n):
+    return safe_path(os.path.join(state_dir(cwd), f"idd-all-run-{n}.lock"))
+
+
+@contextlib.contextmanager
+def state_lock(cwd, n):
+    """One exclusive lock per issue around every write of its run state (#602): init, the gate's round record and
+    next's fix answer. A lock held on an open file is released when the process ends, even on a crash; the file's
+    existence is never the lock. O_NOFOLLOW: a planted symlink is not followed."""
+    path = lock_path(cwd, n)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 # ── arguments ──────────────────────────────────────────────────────────────
@@ -179,10 +208,15 @@ def cmd_init(argv):
         "branch": a["--branch"], "default": a["--default"],
         "review": a["--review"] == "yes", "in_chain": a["--in-chain"] == "yes",
         "verify_stop": None if a["--stop"] == "none" else a["--stop"], "rounds": [], "attempts": [], "last_gate": None,
-        "created_at": iso(now()),
+        "created_at": iso(now()), "run_id": secrets.token_hex(8),   # #602: one identity per run, unique within a second
     }
     os.makedirs(os.path.dirname(spath), exist_ok=True)
-    write_state(cwd, a["--issue"], state)
+    try:
+        with state_lock(cwd, a["--issue"]):
+            write_state(cwd, a["--issue"], state)
+    except (Stop, OSError) as exc:
+        print(f"close-stage: init failed: {exc}", file=sys.stderr)
+        return 3
     if os.path.exists(rpath):
         os.unlink(rpath)
     print(spath)
@@ -194,9 +228,25 @@ def cmd_reset(argv):
     if a is None or not a.get("--cwd") or not os.path.isdir(a["--cwd"]) or not re.match(r"^[0-9]+$", a.get("--issue", "")):
         return usage("reset needs --cwd <dir> --issue <digits>")
     try:
-        for path in (state_path(a["--cwd"], a["--issue"]), result_path(a["--cwd"], a["--issue"])):
-            if os.path.exists(path):
-                os.unlink(path)
+        paths = [p for p in (state_path(a["--cwd"], a["--issue"]), result_path(a["--cwd"], a["--issue"]))
+                 if os.path.lexists(p)]
+        if not paths:
+            return 0           # #602 r2: nothing to delete — no state directory and no lock file are created
+        try:
+            lock = state_lock(a["--cwd"], a["--issue"])     # #602 r1: a gate holding the lock cannot write it back
+            lock.__enter__()
+        except (Stop, OSError) as exc:
+            # #602 r2: a lock that cannot be used must not keep an earlier run's state alive
+            print(f"close-stage: reset: the run-state lock could not be taken ({exc}); deleting without it",
+                  file=sys.stderr)
+            lock = None
+        try:
+            for path in paths:
+                if os.path.lexists(path):
+                    os.unlink(path)
+        finally:
+            if lock is not None:
+                lock.__exit__(None, None, None)
     except (Stop, OSError) as exc:
         print(f"close-stage: reset failed: {exc}", file=sys.stderr)
         return 3
@@ -228,9 +278,19 @@ def latest_report(n, me, since, comments):
     return newest, ""
 
 
+def run_report_ids(n, me, since, comments):
+    """The ids of every `## Verify: #N` report this account posted since the run began (#602 r2). A round is a
+    report: one that is not in the round record is a round that was not recorded, and the record then undercounts
+    the rounds, whatever Phase 4 remembers."""
+    own = re.compile(rf"^## Verify: #{n}(?![0-9])")
+    return [c.get("id") for c in comments if c.get("login") == me and own.match(first_line(c.get("body")))
+            and (since is None or ts(c.get("created_at")) >= since)]
+
+
 def judge_report(repo, n, sha, base, since):
     me = session_login()
-    report, other = latest_report(n, me, since, issue_comments(repo, n))
+    comments = issue_comments(repo, n)
+    report, other = latest_report(n, me, since, comments)
     if report is None:
         when = f" since {iso(since)}" if since is not None else ""
         if other == "none":
@@ -268,6 +328,7 @@ def judge_report(repo, n, sha, base, since):
         return 2, dict(named, status="unparseable", reason=f"verify-gate.py gave no JSON (exit {rc})")
     result["comment_id"] = report.get("id")
     result["verify_url"] = report.get("html_url")
+    result["reports_since"] = run_report_ids(n, me, since, comments)   # #602 r2: the ledger merge_gate checks
     result["report_author"] = report.get("login")
     return (rc if rc in (0, 1, 2) else 2), result
 
@@ -297,11 +358,17 @@ def settled_stop(gate):
 
 
 def run_since(cwd, n):
+    return run_identity(cwd, n)["created_at"]
+
+
+def run_identity(cwd, n):
+    """The run a gate reads for: its start time and its run_id (#602), both None when there is no readable record."""
     try:
         with open(state_path(cwd, n), encoding="utf-8") as fh:
-            return parse_iso(json.load(fh)["created_at"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+            st = json.load(fh)
+        return {"created_at": parse_iso(st["created_at"]), "run_id": st.get("run_id")}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {"created_at": None, "run_id": None}
 
 
 def cmd_gate(argv):
@@ -311,9 +378,10 @@ def cmd_gate(argv):
             or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes":
         return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base and "
                      "--read-only yes")
-    since = None
+    since = run_id = None
     try:
-        since = run_since(a["--cwd"], a["--issue"])   # the run this gate reads for; the record is written for it only
+        ident = run_identity(a["--cwd"], a["--issue"])   # the run this gate reads for; the record is written for it only
+        since, run_id = ident["created_at"], ident["run_id"]
         rc, result = judge_report(a["--repo"], a["--issue"], a["--sha"], a.get("--base"), since)
     except Stop as exc:
         rc, result = 2, {"status": "unparseable", "reason": str(exc)}
@@ -322,10 +390,12 @@ def cmd_gate(argv):
     try:
         # --read-only (Phase 5's PR body, verify r3 #1): judge, but leave the round record as Phase 4 left it
         if "--read-only" not in a:
-            record_round(a["--cwd"], a["--repo"], a["--issue"], result, a["--sha"], since)
+            record_round(a["--cwd"], a["--repo"], a["--issue"], result, a["--sha"], since, run_id)
     except Exception as exc:  # fail closed: a round that was not recorded must not read as a judged round
         rc, result = 2, {"status": "unparseable", "reason": f"the round record could not be written: "
                          f"{exc.__class__.__name__}: {exc}", "comment_id": result.get("comment_id")}
+        if isinstance(exc, Replaced):
+            result["replaced"] = True     # #602 r1: Phase 4 stops; this is not a write that failed
     print(json.dumps(result, ensure_ascii=False))
     return rc
 
@@ -361,25 +431,41 @@ def read_state(cwd, repo, n):
     for key in ("rounds", "attempts", "fix_answers"):
         if not isinstance(st.get(key) or [], list) or not all(isinstance(r, dict) for r in st.get(key) or []):
             raise Stop(f"the run state's {key} is not a list of records")
+    # #602: a missing verify_stop is not "no stop mode" — init has always written it; without it the record is unusable
+    if "verify_stop" not in st:
+        raise Stop("the run state has no verify_stop field (written by an older close-stage, or edited); rerun /idd-all")
+    if st["verify_stop"] is not None and st["verify_stop"] not in MODES:
+        raise Stop(f"the run state's verify_stop is {st['verify_stop']!r}, not null or one of {', '.join(MODES)}")
     return st
 
 
-def record_round(cwd, repo, n, result, sha, since=None):
+def record_round(cwd, repo, n, result, sha, since=None, run_id=None):
     """#595/#591: the latest gate result; one attempt per verify round — a new commit, or a new report on the same
     commit (a round whose report is missing or unreadable still counts); and one round per verify report this run
     has not read yet. An unparseable
     report's counts are not kept. No run state (gate run outside /idd-all): nothing is recorded."""
     if not os.path.exists(state_path(cwd, n)):
+        if since is not None:   # #602 r2: the record this gate read for was deleted (a reset by another /idd-all)
+            raise Replaced("the run state this gate read for is gone; the result is not recorded")
         return
+    with state_lock(cwd, n):
+        _record_round_locked(cwd, repo, n, result, sha, since, run_id)
+
+
+def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
+    if not os.path.exists(state_path(cwd, n)) and since is not None:
+        raise Replaced("the run state this gate read for is gone; the result is not recorded")
     st = read_state(cwd, repo, n)
     # The report was picked with this run's start time (`since`). If another /idd-all replaced the run state while the
-    # gate was reading (or there was none then), the result belongs to no round of this run (verify r4 #1).
+    # gate was reading (or there was none then), the result belongs to no round of this run (verify r4 #1). The check
+    # and the write below hold the same lock as init, and the run_id tells two runs started in the same second apart
+    # (#602).
     try:
         created = parse_iso(st["created_at"])
     except (KeyError, ValueError, TypeError):
         created = None
-    if since is None or created != since:
-        raise Stop("the run state was replaced while the gate was reading; the result is not recorded")
+    if since is None or created != since or st.get("run_id") != run_id:
+        raise Replaced("the run state was replaced while the gate was reading; the result is not recorded")
     rid = result.get("comment_id")
     rounds, attempts = list(st.get("rounds") or []), list(st.get("attempts") or [])
     at = iso(now())
@@ -423,18 +509,40 @@ def cmd_next(argv):
             # Remember the result this fix answer is about: asked again with no new report or commit, it is a stop.
             # Not recorded means no fix: a loop whose stop cannot be guaranteed does not run another round.
             try:
-                st["fix_answers"] = list(st.get("fix_answers") or []) + [fix_key(st)]
-                write_state(a["--cwd"], a["--issue"], st)
+                with state_lock(a["--cwd"], a["--issue"]):   # #602: re-read under the lock; a replaced run is not written
+                    if not os.path.exists(state_path(a["--cwd"], a["--issue"])):
+                        raise Replaced("the run state was deleted while next was deciding")
+                    now_st = read_state(a["--cwd"], a["--repo"], a["--issue"])
+                    if (now_st.get("run_id"), now_st.get("created_at")) != (st.get("run_id"), st.get("created_at")):
+                        raise Replaced("the run state was replaced while next was deciding")
+                    now_st["fix_answers"] = list(now_st.get("fix_answers") or []) + [fix_key(st)]
+                    write_state(a["--cwd"], a["--issue"], now_st)
             except Exception as exc:
                 answer = dict(answer, decision="stop", merge=False, decided=False,
                               reason=f"the fix answer could not be recorded ({exc.__class__.__name__}: {exc})")
+                if isinstance(exc, Replaced):
+                    answer["replaced"] = True
     except Stop as exc:
         answer = dict(unknown, reason=f"no readable run state: {exc}")
     except Exception as exc:  # fail closed: a surprise is a stop without a merge, never "fix"
         answer = dict(unknown, reason=f"internal error: {exc.__class__.__name__}: {exc}")
     decided = answer.pop("decided", True)
+    answer["decided"] = bool(decided)   # #602: printed too, so Phase 4 can take its fallback without the exit code
     print(json.dumps(answer, ensure_ascii=False))
     return 0 if decided else 3
+
+
+def ledger_check(gate, rounds):
+    """#602 r2: every verify report of this run is a round of the record. One that is not is a round the gate could
+    not record, so the record undercounts the rounds: such a run is not merged, with or without a stop mode. Run
+    after the checks on the newest report, which name the more specific cause."""
+    ids = gate.get("reports_since")
+    if not isinstance(ids, list):
+        raise Stop("guardrail 1 (verify rounds) — the gate did not list this run's verify reports")
+    missing = [i for i in ids if i not in [r.get("report_id") for r in rounds]]
+    if missing:
+        raise Stop(f"guardrail 1 (verify rounds) — {len(missing)} verify report(s) of this run are not in the round "
+                   "record: a round was not recorded, so the rounds cannot be counted — not merging")
 
 
 def merge_gate(st, rc, gate, sha):
@@ -461,12 +569,14 @@ def merge_gate(st, rc, gate, sha):
         if st.get("interaction") == "unattended" and len(attempts) > 2:
             raise Stop(f"guardrail 1 (verify rounds) — {len(attempts)} verify rounds are recorded and a run without a stop "
                        "mode allows 2 verify rounds; a person reviews the fixes after the second")
+        ledger_check(gate, rounds)
         return
     if rc == 2:
         raise Stop(f"guardrail 1 (verify gate) — unparseable: {gate.get('reason')}")
     if not rounds or rounds[-1].get("report_id") != gate.get("comment_id") or rounds[-1].get("sha") != sha:
         raise Stop(f"guardrail 1 (stop mode {mode}) — the newest verify report is not the round the stop mode judged; "
                    "run close-stage.py gate and next again")
+    ledger_check(gate, rounds)
     # The table is applied to the counts the gate just re-read, not only to the record (verify r2 #1).
     for field in ("blocking", "in_scope", "low_in_scope"):
         if rounds[-1].get(field) != gate.get(field):

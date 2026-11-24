@@ -74,6 +74,26 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       {"status": remote|ok|error, "base": "<commit>", "from": baseline-tag|first-commit, "reason": "..."}
       exit 0 (remote, ok), 2 (error)
 
+  scrub-authors --cwd <dir>                                                     (#611)
+      Remove the author's address from change metadata before it is committed. In every .openspec.yaml under
+      openspec/changes/ that is untracked or differs from HEAD (staged or not; ignored files are not read), a
+      `created_by:` or `archived_by:` line whose value ends in an angle-bracketed part holding an @ keeps the
+      field and the name only. Other lines, and files without such a line, stay byte-identical; a file that is
+      not a regular file (a symbolic link) is not read. The spec directory is read from the working tree.
+      Every file is read and checked before any is rewritten, so an error found while reading leaves them all
+      unchanged; an error while writing or staging names the files already rewritten. A file whose staged copy
+      differs from HEAD is staged again after it is rewritten. Only the working copy is read: a staged copy
+      whose working copy is deleted or already has no address is not checked, and a working copy that matches
+      HEAD is left alone. Ignored files and symbolic links are not read, and neither is a file git status
+      does not report (assume-unchanged, or equal to HEAD after line-ending conversion), since `git add`
+      does not take it either. A missing or symlinked changes/ has nothing to scan. A file with a merge
+      conflict, a directory under changes/ that cannot be read, or an unreadable HEAD copy is an error. A
+      rewrite goes through a new file, so a hard link to the old one keeps its bytes. After staging again,
+      the staged copy is read back and must hold no address.
+      {"status": "ok", "cleaned": [<paths relative to the repository top, sorted>]} or
+      {"status": "error", "reason": "..."}
+      exit 0 (ok), 2 (error)
+
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
 .spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
 
@@ -82,6 +102,8 @@ Anything that cannot be read or decided is `error` (exit 2), never `ok` or `pass
 import json
 import os
 import re
+import stat
+import tempfile
 import shutil
 import subprocess
 import sys
@@ -1118,12 +1140,167 @@ def cmd_link_base(argv):
         return emit({"status": "error", "reason": str(exc)}, 2)
 
 
+UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}   # git status codes of an unresolved merge
+AUTHOR_LINE_RE = re.compile(r"^(created_by|archived_by):[ \t]*(.*?)[ \t]*<[^<>\r\n]*@[^<>\r\n]*>[ \t]*$")
+LINE_END_RE = re.compile(r"(\r\n|\r|\n)$")
+
+
+def scrub_author_lines(text):
+    """The text with the address removed from created_by and archived_by lines, and whether anything changed."""
+    out, changed = [], False
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
+    parts = re.split(r"(\r\n|\r|\n)", text[len(bom):])   # YAML line breaks only, not str.splitlines()'s
+    for i in range(0, len(parts), 2):
+        body, end = parts[i], parts[i + 1] if i + 1 < len(parts) else ""
+        m = AUTHOR_LINE_RE.match(body)
+        if m:
+            name = m.group(2)
+            body = f"{m.group(1)}: {name}" if name else f"{m.group(1)}:"
+            changed = True
+        out.append(body + end)
+    return bom + "".join(out), changed
+
+
+def _no_symlinked_dirs(root, directory, top):
+    """Whether every directory from root down to directory is a real directory, not a symlink.
+
+    A directory that is missing counts as not real; any other error reading one is a Fail."""
+    rel = os.path.relpath(directory, root)
+    if rel == os.curdir:
+        return True
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):   # not "..draft", a real name
+        return False
+    here = root
+    for part in rel.split(os.sep):
+        here = os.path.join(here, part)
+        try:
+            if not stat.S_ISDIR(os.lstat(here).st_mode):
+                return False
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise Fail(f"cannot read {os.path.relpath(here, top)}: {exc.strerror or exc}")
+    return True
+
+
+def cmd_scrub_authors(argv):
+    args = parse(argv, ("--cwd",), ("--cwd",))
+    try:
+        top = repo_top(args["--cwd"])
+        sd = spec_dir_worktree(top)
+        changes = os.path.join(top, sd, "changes")
+        try:
+            root = os.lstat(changes)
+        except FileNotFoundError:
+            return emit({"status": "ok", "cleaned": []}, 0)   # no changes/ directory: nothing to scan
+        except OSError as exc:
+            raise Fail(f"cannot read {sd}/changes: {exc.strerror or exc}")
+        if not stat.S_ISDIR(root.st_mode):   # a symlink (or a file) at changes/ is not followed
+            return emit({"status": "ok", "cleaned": []}, 0)
+        p = git(top, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", f"{sd}/changes")
+        entries = p.stdout.split(b"\x00")
+        paths, i = [], 0
+        while i < len(entries):
+            rec = entries[i]
+            i += 1
+            if len(rec) < 4:
+                continue
+            xy, path = rec[:2].decode("ascii", "replace"), os.fsdecode(rec[3:])
+            if "R" in xy or "C" in xy:
+                i += 1   # a rename or copy carries the old path next
+            if os.path.basename(path) != ".openspec.yaml":
+                continue
+            if xy in UNMERGED:
+                raise Fail(f"{path} has a merge conflict; resolve it before scrub-authors runs")
+            if "D" in xy:
+                continue
+            paths.append((path, xy[0] not in " ?"))   # second: the index holds a copy that differs from HEAD
+        def unreadable(exc):
+            raise Fail(f"cannot read {os.path.relpath(exc.filename, top) if exc.filename else 'a directory'} "
+                       f"under {sd}/changes: {exc.strerror or exc}")
+
+        for _ in os.walk(changes, onerror=unreadable):   # git status skips a directory it cannot open
+            pass
+        has_head = git(top, "rev-parse", "--verify", "-q", "HEAD^{commit}", check=False).returncode == 0
+        # Read and check every file before rewriting any, so an error leaves them all as they were.
+        plan = []
+        for rel, staged in sorted(set(paths)):
+            full = os.path.join(top, rel)
+            if not _no_symlinked_dirs(changes, os.path.dirname(full), top):
+                continue   # a symlinked directory on the way: not read, like a symlinked file
+            try:
+                info = os.lstat(full)
+            except OSError as exc:
+                raise Fail(f"cannot read {rel}: {exc.strerror or exc}")
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            try:
+                with open(full, "rb") as fh:
+                    raw = fh.read()
+            except OSError as exc:
+                raise Fail(f"cannot read {rel}: {exc.strerror or exc}")
+            if has_head and git(top, "ls-tree", "-z", "HEAD", "--", rel).stdout:
+                head = git(top, "show", f"HEAD:{rel}", check=False)
+                if head.returncode != 0:
+                    raise Fail(f"cannot read HEAD's copy of {rel}: "
+                               f"{head.stderr.decode('utf-8', 'replace').strip()[:200]}")
+                if head.stdout == raw:
+                    continue   # the working copy matches HEAD; the requirement leaves it unchanged
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise Fail(f"{rel} is not UTF-8")
+            new, changed = scrub_author_lines(text)
+            if changed:
+                plan.append((rel, full, new, staged, info.st_mode))
+        cleaned = []
+        for rel, full, new, staged, mode in plan:
+            done = f" (already rewritten: {', '.join(cleaned)})" if cleaned else ""
+            tmp = None
+            try:
+                fd, tmp = tempfile.mkstemp(prefix=".openspec.yaml.", dir=os.path.dirname(full))
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(new.encode("utf-8"))
+                os.chmod(tmp, stat.S_IMODE(mode))
+                os.replace(tmp, full)   # a new file: a hard link to the old one keeps the old bytes
+                tmp = None
+            except OSError as exc:
+                raise Fail(f"cannot write {rel}: {exc.strerror or exc}{done}")
+            finally:
+                if tmp is not None:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+            if staged:   # the next commit takes the staged copy, so stage the rewritten one
+                p = git(top, "add", "--", rel, check=False)
+                if p.returncode != 0:
+                    raise Fail(f"rewrote {rel} but could not stage it again: "
+                               f"{p.stderr.decode('utf-8', 'replace').strip()[:200]}{done}")
+                staged_copy = git(top, "show", f":{rel}", check=False)
+                if staged_copy.returncode != 0:
+                    raise Fail(f"rewrote and staged {rel} but could not read the staged copy back: "
+                               f"{staged_copy.stderr.decode('utf-8', 'replace').strip()[:200]}{done}")
+                try:
+                    staged_text = staged_copy.stdout.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise Fail(f"rewrote {rel}, but its staged copy is not UTF-8 (a clean filter?){done}")
+                if scrub_author_lines(staged_text)[1]:
+                    raise Fail(f"rewrote {rel}, but its staged copy still holds an address "
+                               f"(a clean filter?){done}")
+            cleaned.append(rel)
+        return emit({"status": "ok", "cleaned": cleaned}, 0)
+    except Fail as exc:
+        return emit({"status": "error", "reason": str(exc)}, 2)
+
+
 def main(argv):
     handlers = {"declared": cmd_declared, "archived": cmd_archived, "links": cmd_links, "preflight": cmd_preflight,
-                "ic": cmd_ic, "plan": cmd_plan, "archive-ref": cmd_archive_ref, "link-base": cmd_link_base}
+                "ic": cmd_ic, "plan": cmd_plan, "archive-ref": cmd_archive_ref, "link-base": cmd_link_base,
+                "scrub-authors": cmd_scrub_authors}
     if not argv or argv[0] not in handlers:
         print("spec-change: subcommand required: declared | archived | links | preflight | ic | plan | archive-ref | "
-              "link-base", file=sys.stderr)
+              "link-base | scrub-authors", file=sys.stderr)
         return 64
     try:
         return handlers[argv[0]](argv[1:])

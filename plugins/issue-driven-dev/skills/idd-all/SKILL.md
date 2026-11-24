@@ -985,7 +985,11 @@ Skill(skill="spectra-propose", args="$PROPOSE_ARGS")
 
 Capture the change-name line(unattended)or whatever spectra-propose prints last(attended).
 
+Before anything is committed, remove the author's address that Spectra wrote into the change metadata, as [`references/spec-wrapper.md`](../../references/spec-wrapper.md) step 3 does (#611): run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"` and print the files it cleaned. Anything other than `ok` stops the run.
+
 #### Step 3b.4: Apply
+
+If the change is parked, unpark it first (`spectra unpark "<change-name>"`). Then run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" scrub-authors --cwd "$CWD"` before `spectra-apply`, as [`references/spec-wrapper.md`](../../references/spec-wrapper.md) step 4 does (#611). `spectra park` moves a change out of the working tree, so the run after propose may not have seen it. Anything other than `ok` stops the run.
 
 ```bash
 APPLY_ARGS="<change-name from Step 3b.3>
@@ -1065,7 +1069,7 @@ fi
 
 #### Step 3b.6: Spec close-out 與 Implementation Complete（#480）
 
-`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → commit `chore: archive <change> (#N)` → `spec-change.py" links --base <這條 branch 與剛 fetch 的預設 branch（FETCH_HEAD）的 merge-base>`（契約第 5 步那段；程式 repo 沒有 remote、用 `spec_archive` 指到本機 branch 時，起點改由 `spec-change.py link-base` 給，#547） → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
+`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → `spec-change.py" scrub-authors`（#611）→ commit `chore: archive <change> (#N)` → `spec-change.py" links --base <這條 branch 與剛 fetch 的預設 branch（FETCH_HEAD）的 merge-base>`（契約第 5 步那段；程式 repo 沒有 remote、用 `spec_archive` 指到本機 branch 時，起點改由 `spec-change.py link-base` 給，#547） → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
 
 通過之後貼 Implementation Complete（經 `gh-egress.sh`），讓 `idd-verify` 與 `idd-close` 讀得到這張 issue 的宣告：
 
@@ -1175,10 +1179,19 @@ FIX_IN_SCOPE = not REVIEW_FLAG and not IN_CHAIN      # read the run-state file i
 STOP_MODE = None if STOP_MODE_LINE == "none" else STOP_MODE_LINE   # None, "early", "exhaustive-blocking" or "exhaustive-all"
 STOP_REASON = None
 ROUND = 0                                            # the last round next counted; the fallback goes on from it (verify r2 #5)
+FALLBACK = False                                     # #602 r1: once Phase 4 counts a round itself, it counts every later one
 while True:
     Skill(skill="issue-driven-dev:idd-verify", args=VERIFY_ARGS)
     gate = verify_gate()                     # the gate block above → GATE_JSON (it records the round)
     nxt = next_step()                        # the next block above → NEXT_JSON
+    # >>> phase4-replaced
+    # #602 r1: another /idd-all replaced this run's state (gate or next says `replaced`). This run no longer owns the
+    # record: it does not count, fix or push another round, whatever the stop mode.
+    # #602 r2: it stops WITHOUT the abort cleanup — `reset` and `clear_unattended` would delete the state and the
+    # unattended flag of the run that replaced it. Report `Stopped:` and leave the clone as it is.
+    if gate.get("replaced") or nxt.get("replaced"):
+        stop_replaced("another /idd-all replaced this run's state while it was being judged; this run stops")
+    # <<< phase4-replaced
 
     if STOP_MODE is not None:
         # With a stop mode (#595), attended and unattended alike: next decides, the model only fixes.
@@ -1207,12 +1220,25 @@ while True:
     # or unreadable, or the fix pass made no commit.
     # No run state (next's answer has no round or limit, e.g. Step 0.7's init failed): count the rounds yourself as
     # before #595 (verify r1 #6). The close stage does not merge such a run, but the fix rounds stay the same.
-    if nxt.get("round") is not None:
-        ROUND = nxt.round                    # keep the count, in case the run state is lost in a later round
-    if nxt.get("round") is None or nxt.get("limit") is None:
+    # >>> phase4-count
+    # #602: also when next could not decide (decided is false, e.g. the first gate could not write the record).
+    # #602 r1: from that round on Phase 4 keeps its own count for the rest of the run. next counts only the rounds it
+    # recorded, so taking its count back would forget the unrecorded round (an unbounded loop when the write keeps
+    # failing, or a third verify round that merges when it failed once).
+    # #602 r2: only when nothing is recorded yet (round 0). An undecided answer at a later round is next refusing a
+    # fix it could not record ("not recorded means no fix"), and Phase 4 takes that stop as it is.
+    # The merge is never decided here: the close stage refuses a run with an unrecorded round on its own (every
+    # verify report of the run must be a round of the record).
+    if nxt.get("round") is None or nxt.get("limit") is None or (nxt.get("decided") is False and nxt.get("round") == 0):
+        FALLBACK = True
+    if FALLBACK:
         ROUND += 1
         LIMIT = 2 if INTERACTION == "unattended" else 1
-        nxt = dict(nxt, round=ROUND, limit=LIMIT, decision="stop" if ROUND >= LIMIT else "fix")
+        own = "stop" if ROUND >= LIMIT else (nxt.get("decision") if nxt.get("decided") is True else "fix")
+        nxt = dict(nxt, round=ROUND, limit=LIMIT, decision=own)
+    elif nxt.get("round") is not None:
+        ROUND = nxt["round"]                 # keep the count, in case the run state is lost in a later round
+    # <<< phase4-count
 
     if gate.status == "clean" or (gate.status == "not_clean" and gate.blocking == 0 and not FIX_IN_SCOPE):
         if gate.status == "clean" and gate.low_in_scope > 0:
@@ -1254,7 +1280,7 @@ while True:
     attempt_auto_fix(report_rows(action="Blocking") + (report_rows(action="In-scope fix") if FIX_IN_SCOPE else []))
 ```
 
-**輪數由 `next` 決定（#595、#591）**：沒有停止模式時，unattended 2 輪 verify（中間最多修一次）、attended 1 輪（讀出結果、交回使用者），與 #595 之前相同；輪數從 run-state 的紀錄讀（gate 每判一個新的 commit、或同一個 commit 上的新報告算一輪；報告沒貼出、讀不出，或修正沒有產生 commit，也算），所以 compaction 之後也不會被超過，close stage 也會擋下紀錄超過 2 輪的無人值守 run，以及 Phase 4 從沒判過的報告。`next` 的回答沒有 `round` 或 `limit` 時（沒有 run-state，例如 Step 0.7 的 init 失敗），照 #595 之前由 Phase 4 自己數輪數（unattended 2 輪、attended 1 輪）；這種 run 的 close stage 本來就不合併，修正的輪數不變。設了停止模式而沒有 run-state、或這一輪 gate 讀不出報告時，不再修、直接停下。`next` 回答過 fix 的同一個結果（同一個 commit、同一份報告或同樣沒有報告）再問一次，答案是停下、不合併：新的一輪一定要帶來新的 commit 或新的報告，所以 compaction 之後重跑 `next` 也會停在這裡，而不是重複上一輪的修正（verify r1 #2、#4）。attended 的使用者在同一個 session 裡處理完 findings、說要繼續時，再跑一輪 verify（不限輪數，不自動修），乾淨了就照常進 Phase 5 與 Phase 5c；這是 attended 走到「某一輪乾淨才 merge 並 close」的路徑（spectra-discuss 結論 2，verify r3 #8）。
+**輪數由 `next` 決定（#595、#591）**：沒有停止模式時，unattended 2 輪 verify（中間最多修一次）、attended 1 輪（讀出結果、交回使用者），與 #595 之前相同；輪數從 run-state 的紀錄讀（gate 每判一個新的 commit、或同一個 commit 上的新報告算一輪；報告沒貼出、讀不出，或修正沒有產生 commit，也算），所以 compaction 之後也不會被超過，close stage 也會擋下紀錄超過 2 輪的無人值守 run，以及 Phase 4 從沒判過的報告。`next` 的回答沒有 `round` 或 `limit`（沒有 run-state，例如 Step 0.7 的 init 失敗），或帶 `decided: false`（例如第一次 gate 寫不進紀錄）時，照 #595 之前由 Phase 4 自己數輪數，而且從那一輪起整個 run 都自己數，不再拿 `next` 的輪數（它只數記下的輪）；gate 或 `next` 帶 `replaced: true` 時（別的 `/idd-all` 換掉了這個 run 的紀錄），不論有沒有停止模式都停下，不修、不推，也不做 abort 的清理（那些是取代它的 run 的）。自己數輪數只在還沒有任何紀錄（`round` 是 0）時開始；這種 run 有一輪沒記下，close stage 看到這次 run 的 verify 報告不全在紀錄裡就不合併（unattended 2 輪、attended 1 輪）；這種 run 的 close stage 本來就不合併，修正的輪數不變。設了停止模式而沒有 run-state、或這一輪 gate 讀不出報告時，不再修、直接停下。`next` 回答過 fix 的同一個結果（同一個 commit、同一份報告或同樣沒有報告）再問一次，答案是停下、不合併：新的一輪一定要帶來新的 commit 或新的報告，所以 compaction 之後重跑 `next` 也會停在這裡，而不是重複上一輪的修正（verify r1 #2、#4）。attended 的使用者在同一個 session 裡處理完 findings、說要繼續時，再跑一輪 verify（不限輪數，不自動修），乾淨了就照常進 Phase 5 與 Phase 5c；這是 attended 走到「某一輪乾淨才 merge 並 close」的路徑（spectra-discuss 結論 2，verify r3 #8）。
 
 **停止模式（#595）**：設了模式時（Step 0.2 的 `→ Stop mode:` 不是 `none`），attended 與 unattended 都照 `next` 自動修、自動再驗；安全漏洞仍不自動修。to-fix count 是 Blocking 加上 LOW／INFO／P3 以外的 In-scope fix（`--review`、`--in-chain` 只數 Blocking）。判定表（`scripts/lib/stopmode.py`，規格 `idd-pr-hitl-modes` 的「A configured stop mode decides when the fix loop stops and whether the run merges」）：
 
@@ -1276,7 +1302,7 @@ while True:
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
-**修正也留下規格（#480）**：宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）時，修正就是補上規格：照契約第 7 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。其餘情況：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數）：propose 之前先貼一則 `## Implementation Plan (fix round <k>)`，寫 `**Spec plan**: change idd-<N>-fix<k>`，再用輕量形式 propose 與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
+**修正也留下規格（#480）**：宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）時，修正就是補上規格：照契約第 7 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。其餘情況：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數）：propose 之前先貼一則 `## Implementation Plan (fix round <k>)`，寫 `**Spec plan**: change idd-<N>-fix<k>`，再用輕量形式 propose（propose 之後照第 3 步跑 `scrub-authors`，#611）與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
 
 **乾淨的定義（#392，2026-11-10 的決定）**：gate 判 `clean` ＝ 報告判定 PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3。這些沒擋住 merge 的列數在 gate JSON 的 `low_in_scope`。大於 0 時：
 
@@ -1808,6 +1834,7 @@ fi
 abort 時:
 - `clear_unattended "$CWD"`（#123 — 絕不留 stale unattended flag 誤導下一個 attended session）
 - `close-stage.py reset --cwd "$CWD" --issue "$N"`（#392 — 不留這次 run 的 run-state 給下一次 run 讀）
+- 例外（#602 r2）：`stop_replaced`（gate 或 `next` 帶 `replaced: true`）不跑上面兩項。那時 run-state 與 unattended 旗標屬於取代它的那一次 run，刪掉會讓那一次 run 也停下；只回報 `Stopped:` 與原因
 - TaskList 標記當前 phase 為 in_progress(不要 mark completed)
 - 顯示「自己手動接手」的具體命令(例:`/idd-verify #19` 或 `gh pr create ...`)
 - branch 不刪除(保留進度,user 可繼續)
