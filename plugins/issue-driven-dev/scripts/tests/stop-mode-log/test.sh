@@ -79,16 +79,42 @@ ERR=$(IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a6" --repo $REPO --iss
 assert_eq "an empty --gate → nothing" 2 "$(lines "$REC")"
 assert_exit "… exit 0" 0 "$RC"
 assert_grep "… and says why" "gate's answer" "$ERR"
+# #603 r3: a gate answer that is not a JSON object, or is from another round, fails closed the same way
+for G in 'garbage' '"replaced"' '[{"replaced": true}]' '{"status": "unparseable", "replaced": true' 'null'; do
+  ERR=$(IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a6" --repo $REPO --issue 16 \
+    --answer '{"decision": "stop", "merge": false, "mode": "early", "reason": "x", "decided": false}' --gate "$G" 2>&1)
+  assert_eq "a gate answer that is not an object ($G) → nothing" 2 "$(lines "$REC")"
+  assert_grep "… and says why ($G)" "gate's answer" "$ERR"
+done
+ERR=$(IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a6" --repo $REPO --issue 16 \
+  --answer '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true, "round": 2}' \
+  --gate '{"status": "clean", "round": 1}' 2>&1)
+assert_eq "a gate answer from another round → nothing" 2 "$(lines "$REC")"
+assert_grep "… and says why" "round" "$ERR"
+# … but only where a line would have been written: a fix answer or a run with no stop mode says nothing
+ERR=$(IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a3" --repo $REPO --issue 13 \
+  --answer '{"decision": "fix", "merge": false, "mode": "exhaustive-blocking", "reason": "2 to fix", "decided": true}' --gate '' 2>&1)
+assert_eq "a fix answer with an empty gate prints nothing" "" "$ERR"
+ERR=$(IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a4" --repo $REPO --issue 14 \
+  --answer '{"decision": "stop", "merge": true, "mode": null, "reason": "clean", "decided": true}' --gate '' 2>&1)
+assert_eq "a run with no stop mode and an empty gate prints nothing" "" "$ERR"
 
 L2=$(sed -n 2p "$REC" 2>/dev/null)
 assert_grep "the line names the repo" '"repo": "octo/demo"' "$L2"
 assert_grep "… the issue" '"issue": 12' "$L2"
 assert_grep "… the mode" '"mode": "exhaustive-blocking"' "$L2"
-assert_grep "… the decision and next's merge answer" '"next_merge": false' "$L2"
+assert_grep "… the decision" '"decision": "stop"' "$L2"
+assert_grep "… next's merge answer" '"next_merge": false' "$L2"
+assert_grep "… decided" '"decided": true' "$L2"
 assert_grep "… the reason" '"reason": "no progress"' "$L2"
 assert_grep "… each round's report id" '"report_id": 1002' "$L2"
 assert_grep "… each round's Blocking count" '"blocking": 1' "$L2"
 assert_grep "… the run's created_at" '"created_at": "' "$L2"
+
+# an undecided stop of a run whose state is readable is recorded with decided false
+run_state "$T/a7" 17 early "unparseable:0:0"
+REC="$T/rec-und.jsonl" append "$T/a7" 17 '{"decision": "stop", "merge": false, "mode": "early", "reason": "gate unparseable", "decided": false}'
+assert_grep "an undecided stop is recorded with decided false" '"decided": false' "$(cat "$T/rec-und.jsonl" 2>/dev/null)"
 
 echo "── summary: the last line per run"
 # A run asked twice is one run
@@ -139,9 +165,18 @@ printf '%s\n' '{"repo": "x", "issue": 5, "created_at": "t", "mode": "early\u001b
 TXT=$(IDD_STOP_LOG="$REC" python3 "$LOG" summary)
 assert_eq "no ESC byte reaches the terminal (reason, mode, to-fix)" 0 "$(printf '%s' "$TXT" | LC_ALL=C grep -c $'\x1b')"
 assert_eq "… nor a C1 control (U+009B)" 0 "$(printf '%s' "$TXT" | LC_ALL=C grep -c $'\xc2\x9b')"
+assert_grep "the mode is printed, escaped" 'early\x1b[31m' "$TXT"
+assert_grep "the to-fix sequence is printed, escaped" 'to-fix \x1b]0;t\x07' "$TXT"
+assert_grep "the reason is printed, escaped" 'a\x1b[2Jb\x9bc' "$TXT"
+# a last line without its newline does not swallow the next line appended
+REC="$T/rec-nl.jsonl"
+printf '%s' '{"repo": "x", "issue": 7, "created_at": "t", "mode": "early", "rounds": []}' > "$REC"
+append "$T/m1" 31 '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}'
+SUM=$(IDD_STOP_LOG="$REC" python3 "$LOG" summary --json)
+assert_eq "both lines are read" "0 2" "$(printf '%s' "$SUM" | jq -r '"\(.unreadable_lines) \(.modes.early.runs)"')"
 # the default record path, when IDD_STOP_LOG is not set
 DH="$T/home"; mkdir -p "$DH"
-HOME="$DH" python3 "$LOG" append --cwd "$T/m1" --repo $REPO --issue 31 \
+env -u IDD_STOP_LOG HOME="$DH" python3 "$LOG" append --cwd "$T/m1" --repo $REPO --issue 31 \
   --answer '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}' --gate '{"status": "clean"}'
 assert_eq "without IDD_STOP_LOG the record is ~/.claude/.idd/stop-mode-runs.jsonl" 1 "$(lines "$DH/.claude/.idd/stop-mode-runs.jsonl")"
 # append writes no bytecode into the plugin directory
@@ -158,6 +193,10 @@ awk '/^```bash$/{inb=1; buf=""; next} /^```$/ && inb {inb=0; if (buf ~ /NEXT_JSO
   "$SKILL" > "$BLOCK"
 assert_grep "the next block was found" 'close-stage.py" next' "$(cat "$BLOCK")"
 assert_grep "the next block calls stop-mode-log append" 'stop-mode-log.py" append' "$(cat "$BLOCK")"
+assert_grep "… with the gate file" '--gate-file "$CWD/.claude/.idd/state/idd-all-gate-$N.json"' "$(cat "$BLOCK")"
+# #603 r3: the gate block keeps its answer in a file, which survives the Bash call (a variable does not)
+GBLOCK=$(awk '/^```bash$/{inb=1; buf=""; next} /^```$/ && inb {inb=0; if (buf ~ /GATE_JSON=\$\(python3/) {printf "%s", buf; exit} next} inb {buf = buf $0 "\n"}' "$SKILL")
+assert_grep "the gate block writes its answer to the gate file" '"$CWD/.claude/.idd/state/idd-all-gate-$N.json"' "$GBLOCK"
 
 # A plugin root whose close-stage.py prints a fixed answer when run, and is the real module when imported.
 ROOT="$T/root"; mkdir -p "$ROOT/scripts"
@@ -172,30 +211,33 @@ if __name__ == "__main__":
     print(os.environ["FAKE_ANSWER"]); sys.exit(int(os.environ.get("FAKE_RC", "0")))
 PY
 run_block() { # <cwd> <issue> <record path> ; prints the block's output then "RC=<rc> NEXT_RC=<rc> NEXT_JSON=<json>"
-  ( cd "$T" && CLAUDE_PLUGIN_ROOT="$ROOT" REAL_CS="$CS" IDD_STOP_LOG="$3" CWD="$1" GITHUB_REPO=$REPO N="$2" GATE_JSON="${GATE_JSON:-}" \
+  # the gate block's file: GATE_FILE_JSON's value when it is set, no file when it is not
+  local gf="$1/.claude/.idd/state/idd-all-gate-$2.json"
+  if [ "${GATE_FILE_JSON+x}" ]; then printf '%s\n' "$GATE_FILE_JSON" > "$gf"; else rm -f "$gf"; fi
+  ( cd "$T" && CLAUDE_PLUGIN_ROOT="$ROOT" REAL_CS="$CS" IDD_STOP_LOG="$3" CWD="$1" GITHUB_REPO=$REPO N="$2" \
       bash -c "$(cat "$BLOCK")"'
       echo "RC=$? NEXT_RC=$NEXT_RC NEXT_JSON=$NEXT_JSON"' 2>&1 )
 }
 run_state "$T/b1" 21 exhaustive-blocking "not_clean:0:1"
 ANS='{"decision": "stop", "merge": false, "mode": "exhaustive-blocking", "reason": "coverage", "decided": true}'
 GOK='{"status": "not_clean", "blocking": 0}'        # the gate's answer, as the gate block leaves it
-OUT=$(GATE_JSON="$GOK" FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-b.jsonl")
+OUT=$(GATE_FILE_JSON="$GOK" FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-b.jsonl")
 assert_eq "the block writes the record" 1 "$(lines "$T/rec-b.jsonl")"
 assert_grep "the block keeps next's answer" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 # spec scenario: A failed append does not change the run
 mkdir -p "$T/ro"; chmod 500 "$T/ro"
-OUT=$(GATE_JSON="$GOK" FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/ro/sub/rec.jsonl")
+OUT=$(GATE_FILE_JSON="$GOK" FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/ro/sub/rec.jsonl")
 assert_grep "a failed append prints a warning" "stop-mode record was not written" "$OUT"
 assert_grep "… and leaves NEXT_JSON and NEXT_RC as next answered" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 assert_grep "… and the block ends as before" "RC=0 " "$OUT"
 chmod 700 "$T/ro"
-# #603 r2: the block with GATE_JSON lost (a separate Bash call) writes nothing and says so
+# #603 r3: the block with no gate file writes nothing and says so; a shell that lost GATE_JSON does not matter
 OUT=$(GATE_JSON= FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-lost.jsonl")
-assert_eq "a lost GATE_JSON: the block writes no record" 0 "$(lines "$T/rec-lost.jsonl")"
+assert_eq "no gate file: the block writes no record" 0 "$(lines "$T/rec-lost.jsonl")"
 assert_grep "… says the gate's answer is missing" "gate's answer" "$OUT"
 assert_grep "… and keeps next's answer" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 # #603 r1: the block hands the gate's answer to append, so a replaced gate writes nothing
-OUT=$(GATE_JSON='{"status": "unparseable", "replaced": true}' FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-g.jsonl")
+OUT=$(GATE_FILE_JSON='{"status": "unparseable", "replaced": true}' FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-g.jsonl")
 assert_eq "a replaced gate: the block writes no record" 0 "$(lines "$T/rec-g.jsonl")"
 assert_grep "… and keeps next's answer" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 UND='{"decision": "stop", "merge": false, "mode": "exhaustive-blocking", "reason": "x", "decided": false}'
