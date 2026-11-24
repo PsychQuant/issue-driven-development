@@ -524,7 +524,7 @@ The close stage SHALL stop at verified when any of these holds (a closed list). 
 ---
 ### Requirement: Unattended fix loop covers in-scope findings with a two-round limit
 
-This requirement applies to a run without a stop mode; a run with one follows requirement "A configured stop mode decides when the fix loop stops and whether the run merges". When the resolved interaction is `unattended` and the verify gate reports `not_clean`, `idd-all` SHALL fix every Blocking finding, and every In-scope fix finding unless the run carries `--review` or `--in-chain` (those runs never merge and keep the Blocking-only scope), in the same branch and run verify again, for at most 2 verify rounds in total (one fix pass between them). The number of rounds already run SHALL be read from the run-state record, not from the model's memory; every new commit the verify gate judged, and every new report on the same commit, counts as one round, also when its report was missing or could not be read or the fix pass made no commit. The close stage SHALL stop, without merging, an unattended run without a stop mode whose record holds more than 2 rounds, or whose newest verify report is not in the record, an empty record included, or whose record holds fewer attempts than rounds. When the run-state record cannot be read, a run without a stop mode SHALL count its rounds itself, as before the record existed; the close stage does not merge such a run. If the gate still reports `not_clean` after the second verify round, `idd-all` SHALL stop at verified without merging or closing. When the resolved interaction is `attended`, `idd-all` SHALL NOT fix findings automatically; it SHALL hand the findings back to the user, and merge and close only follow a later round that the gate reports `clean`. When the gate reports `clean` with `low_in_scope` above zero, `idd-all` SHALL NOT change the branch for those findings (the commit that merges is the commit the round reviewed); it SHALL file them together as one follow-up issue before the close stage.
+This requirement applies to a run without a stop mode; a run with one follows requirement "A configured stop mode decides when the fix loop stops and whether the run merges". When the resolved interaction is `unattended` and the verify gate reports `not_clean`, `idd-all` SHALL fix every Blocking finding, and every In-scope fix finding unless the run carries `--review` or `--in-chain` (those runs never merge and keep the Blocking-only scope), in the same branch and run verify again, for at most 2 verify rounds in total (one fix pass between them). The number of rounds already run SHALL be read from the run-state record, not from the model's memory; every new commit the verify gate judged, and every new report on the same commit, counts as one round, also when its report was missing or could not be read or the fix pass made no commit. The close stage SHALL stop, without merging, an unattended run without a stop mode whose record holds more than 2 rounds, or whose newest verify report is not in the record, an empty record included, or whose record holds fewer attempts than rounds. When the run-state record cannot be read, or `next` answers undecided (its printed answer carries `decided: false`) with nothing recorded yet (round 0), a run without a stop mode SHALL count its rounds itself, as before the record existed, and from that round on SHALL keep counting itself for the rest of the run, not taking `next`'s count again (next counts only the rounds it recorded); the run stops at its own limit. Such a run has a round that is not in the record, so the close stage does not merge it. An undecided answer at a later round (next could not record a fix answer) is a stop that Phase 4 takes as it is. If the gate still reports `not_clean` after the second verify round, `idd-all` SHALL stop at verified without merging or closing. When the resolved interaction is `attended`, `idd-all` SHALL NOT fix findings automatically; it SHALL hand the findings back to the user, and merge and close only follow a later round that the gate reports `clean`. When the gate reports `clean` with `low_in_scope` above zero, `idd-all` SHALL NOT change the branch for those findings (the commit that merges is the commit the round reviewed); it SHALL file them together as one follow-up issue before the close stage.
 
 #### Scenario: Second round comes back clean
 
@@ -604,6 +604,35 @@ code:
 tests:
   - plugins/issue-driven-dev/scripts/tests/close-stage/scenarios.sh
 -->
+
+#### Scenario: An undecided next keeps the fix round of a run without a stop mode
+
+- **GIVEN** a run without a stop mode whose first gate could not write the round record
+- **WHEN** `next` answers stop with `decided: false`
+- **THEN** Phase 4 counts this as round 1 of 2 and fixes, and the close stage does not merge the run
+
+##### Example: next says whether it decided
+
+| Run state | `decision` | `decided` |
+| --- | --- | --- |
+| no gate result recorded yet (no stop mode) | stop | false |
+| one not_clean round recorded (no stop mode, unattended) | fix | true |
+
+#### Scenario: After an undecided round Phase 4 keeps its own count
+
+- **GIVEN** a run without a stop mode, unattended, whose first gate could not write the round record
+- **WHEN** later rounds are recorded, or the write keeps failing
+- **THEN** the loop ends at round 2 by Phase 4's own count, and the close stage does not merge the run
+
+##### Example: rounds after an undecided next
+
+| next's answers | Phase 4 |
+| --- | --- |
+| undecided every round | fix at 1, stop at 2 |
+| undecided, then fix (round 1 of 2) | fix at 1, stop at 2 |
+| undecided, then stop (round 1) | fix at 1, stop at 2 |
+| fix (round 1), then stop (round 2), all recorded | next's answers as they are |
+| undecided at round 1 (next could not record a fix answer) | stop at 1, no own count |
 
 ---
 ### Requirement: Merge guardrails gate every automatic merge
@@ -872,7 +901,7 @@ After each round of a run with a stop mode, `idd-all` SHALL ask `close-stage.py 
 | `exhaustive-blocking` | `blocking` is 0, or `blocking` was not lower than the previous round's in each of the last two rounds | when `blocking` is 0 |
 | `exhaustive-all` | `blocking` is 0 and `in_scope` is 0, LOW findings included; for a run that carries `--review` or `--in-chain`, `blocking` is 0 | always |
 
-In every mode `next` SHALL answer stop without merging when the latest gate result is `unparseable` or holds a Rejected finding, and `exhaustive-all` has no round limit. A gate result read for a run whose run-state record was replaced while the gate was reading SHALL NOT be recorded. Reading the gate and `next` to write the PR body or the run report SHALL use their read-only form, which SHALL NOT change the round record or the fix answers: a report that appears after Phase 4 stopped is not a round, and the close stage does not merge on it. A gate result that `next` has already answered with fix (the same report on the same commit, or no report on the same commit) SHALL be answered stop without merging, in every run with or without a stop mode: a new round brings a new commit or a new report, and a round whose result was not recorded does not reuse the previous answer. When a finding to be fixed is a security vulnerability, `idd-all` SHALL stop without merging instead of fixing it, as for a run without a stop mode. When the run stops with a merge and findings remain, `idd-all` SHALL NOT change the branch for them: the commit that merges is the commit the last round reviewed, and the remaining findings SHALL be filed together as one follow-up issue. A merge allowed by this table SHALL require the Blocking, In-scope fix and LOW counts of the report the close stage re-reads to equal those of the last recorded round, and passes the same guardrails as a clean merge, including a complete coverage line and a complete reviewers line, which the verify gate SHALL read for every verdict, and it SHALL NOT leave an In-scope fix finding of severity CRITICAL, HIGH, P0 or P1 unfixed: the verify gate SHALL report their number, and the close stage itself SHALL refuse such a merge; a run with `--review` or `--in-chain`, or of type `meeting`, never merges.
+In every mode `next` SHALL answer stop without merging when the latest gate result is `unparseable` or holds a Rejected finding, and `exhaustive-all` has no round limit. A gate result read for a run whose run-state record was replaced while the gate was reading SHALL NOT be recorded: `init` writes a random `run_id`, every write and the deletion of the run state (by `init`, by the gate, by `next`'s fix answer and by `reset`) holds one per-issue lock, and the gate compares the `created_at` and `run_id` it read at its start with the record inside that lock. A gate result refused because the run state was replaced SHALL carry `replaced: true`, and so SHALL a `next` answer whose fix answer was refused for that reason; A gate that finds the record it read for deleted, and a `next` that finds it deleted before its locked re-read, SHALL answer the same way. Phase 4 SHALL stop the run on either, with or without a stop mode, SHALL NOT count, fix or push another round, and SHALL NOT run the abort cleanup (`reset`, `clear_unattended`), which belongs to the run that replaced it. Every merge and push SHALL also check the round record against the verify reports of the run: when a `## Verify: #N` report this account posted since the run began is not a round of the record, a round was not recorded and the close stage SHALL NOT merge, with or without a stop mode. `reset` with nothing to delete SHALL create nothing; when its lock cannot be taken it SHALL delete without it and warn. An `init` whose lock cannot be taken SHALL fail with a message and exit 3. A run-state record without a `verify_stop` field, or with a value that is not `null` or one of the three modes, SHALL be refused by `next` and by the close stage, never read as no stop mode. Reading the gate and `next` to write the PR body or the run report SHALL use their read-only form, which SHALL NOT change the round record or the fix answers: a report that appears after Phase 4 stopped is not a round, and the close stage does not merge on it. A gate result that `next` has already answered with fix (the same report on the same commit, or no report on the same commit) SHALL be answered stop without merging, in every run with or without a stop mode: a new round brings a new commit or a new report, and a round whose result was not recorded does not reuse the previous answer. When a finding to be fixed is a security vulnerability, `idd-all` SHALL stop without merging instead of fixing it, as for a run without a stop mode. When the run stops with a merge and findings remain, `idd-all` SHALL NOT change the branch for them: the commit that merges is the commit the last round reviewed, and the remaining findings SHALL be filed together as one follow-up issue. A merge allowed by this table SHALL require the Blocking, In-scope fix and LOW counts of the report the close stage re-reads to equal those of the last recorded round, and passes the same guardrails as a clean merge, including a complete coverage line and a complete reviewers line, which the verify gate SHALL read for every verdict, and it SHALL NOT leave an In-scope fix finding of severity CRITICAL, HIGH, P0 or P1 unfixed: the verify gate SHALL report their number, and the close stage itself SHALL refuse such a merge; a run with `--review` or `--in-chain`, or of type `meeting`, never merges.
 
 With a stop mode, an attended run SHALL fix findings and verify again as an unattended run does, and SHALL ask the user only where a sub-skill asks in attended interaction; without a stop mode it hands the findings back as before. The run report SHALL state the stop mode, the number of rounds, the to-fix count of each round, and the reason `next` gave for stopping.
 
@@ -1000,3 +1029,46 @@ code:
 tests:
   - plugins/issue-driven-dev/scripts/tests/close-stage/scenarios.sh
 -->
+
+#### Scenario: A replaced run is not recorded, even within the same second
+
+- **GIVEN** a gate that started reading for a run, and another `init` that replaced the run state with the same `created_at` before the gate recorded its round
+- **WHEN** the gate records its result
+- **THEN** nothing is written, and the gate answers `unparseable`
+
+##### Example: the run state is identified and locked
+
+| Situation | Result |
+| --- | --- |
+| the record has the gate's `created_at` and `run_id` | the round is recorded |
+| same `created_at`, another `run_id` | refused: the run state was replaced |
+| another process holds the run-state lock | the writer waits for it; a second exclusive lock cannot be taken |
+| the record has no `verify_stop` field | `next` answers stop, undecided; the close stage stops |
+
+#### Scenario: A replaced run stops
+
+- **GIVEN** a run whose state another `/idd-all` replaced while its gate or its `next` was running
+- **WHEN** Phase 4 reads the answers
+- **THEN** the gate's or next's answer carries `replaced: true`, and Phase 4 stops without fixing
+
+##### Example: replaced is marked and stops the run
+
+| Situation | Answer | Phase 4 |
+| --- | --- | --- |
+| the gate read for a run whose `run_id` is no longer on disk | gate unparseable, `replaced: true` | stops |
+| `next` re-reads a record with another `run_id` before writing its fix answer | stop, undecided, `replaced: true` | stops |
+| `reset` while another process holds the run-state lock | waits for the lock, then deletes | — |
+| the record the gate read for was deleted before it wrote | gate unparseable, `replaced: true` | stops, no cleanup |
+
+#### Scenario: An unrecorded round blocks the merge
+
+- **GIVEN** a run whose round record lacks one of the verify reports this account posted for the issue since the run began
+- **WHEN** the close stage checks the merge
+- **THEN** it does not merge, and says a round was not recorded
+
+##### Example: an unrecorded round blocks the merge
+
+| Reports of the run | Round record | Close stage |
+| --- | --- | --- |
+| report A | round with report A | the ledger does not refuse |
+| reports A and B | round with report B only | refused: a round was not recorded |
