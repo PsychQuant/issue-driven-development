@@ -73,6 +73,12 @@ IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a6" --repo $REPO --issue 16 
   --gate '{"status": "unparseable", "replaced": true}'; RC=$?
 assert_eq "a replaced gate → nothing, even when next's answer has no flag" 2 "$(lines "$REC")"
 assert_exit "… and it is not an error" 0 "$RC"
+# #603 r2: an empty --gate means the gate's answer was lost (another Bash call); it fails closed
+ERR=$(IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a6" --repo $REPO --issue 16 \
+  --answer '{"decision": "stop", "merge": false, "mode": "early", "reason": "no round yet", "decided": false}' --gate '' 2>&1); RC=$?
+assert_eq "an empty --gate → nothing" 2 "$(lines "$REC")"
+assert_exit "… exit 0" 0 "$RC"
+assert_grep "… and says why" "gate's answer" "$ERR"
 
 L2=$(sed -n 2p "$REC" 2>/dev/null)
 assert_grep "the line names the repo" '"repo": "octo/demo"' "$L2"
@@ -108,7 +114,8 @@ echo "── the record file and odd lines"
 REC="$T/rec-m.jsonl"
 run_state "$T/m1" 31 early "clean:0:0"
 append "$T/m1" 31 '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}'
-assert_eq "a new record file is 0600" 600 "$(stat -f %Lp "$REC" 2>/dev/null || stat -c %a "$REC")"
+# python reads the mode the same on GNU and BSD (`stat -f` means something else on GNU, #603 r2)
+assert_eq "a new record file is 0600" 600 "$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$REC")"
 echo target > "$T/target.txt"; ln -s "$T/target.txt" "$T/rec-link.jsonl"
 REC="$T/rec-link.jsonl" append "$T/m1" 31 '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}' 2>/dev/null; RC=$?
 assert_exit "a symbolic link at the record path is refused" 1 "$RC"
@@ -118,17 +125,25 @@ REC="$T/rec-odd.jsonl"
 cp "$T/rec-m.jsonl" "$REC"
 printf '%s\n' '{"repo": "x", "issue": 1, "created_at": "t"}' '{"repo": "x", "issue": 2, "created_at": "t", "mode": "early", "rounds": {"a": 1}}' \
   '{"repo": ["x"], "issue": 3, "created_at": "t", "mode": "early", "rounds": []}' \
-  '{"repo": "x", "issue": 4, "created_at": "t", "mode": "early", "rounds": [], "reason": {"a": 1}}' >> "$REC"
+  '{"repo": "x", "issue": 4, "created_at": "t", "mode": "early", "rounds": [], "reason": {"a": 1}}' \
+  '{"repo": "x", "issue": 6, "created_at": "t", "mode": "early", "rounds": [1, "x"]}' >> "$REC"
+printf '\377\376 not utf-8\n' >> "$REC"
 SUM=$(IDD_STOP_LOG="$REC" python3 "$LOG" summary --json); RC=$?
 assert_exit "summary --json survives odd lines" 0 "$RC"
-assert_eq "… and counts them as unreadable" 4 "$(printf '%s' "$SUM" | jq -r '.unreadable_lines')"
+assert_eq "… and counts them as unreadable (wrong shape, rounds of non-objects, not UTF-8)" 6 "$(printf '%s' "$SUM" | jq -r '.unreadable_lines')"
 IDD_STOP_LOG="$REC" python3 "$LOG" summary >/dev/null; RC=$?
 assert_exit "summary text survives odd lines" 0 "$RC"
 # a reason with a terminal control sequence is printed escaped
 REC="$T/rec-esc.jsonl"
-printf '%s\n' '{"repo": "x", "issue": 5, "created_at": "t", "mode": "early", "rounds": [], "reason": "a\u001b[2Jb"}' > "$REC"
+printf '%s\n' '{"repo": "x", "issue": 5, "created_at": "t", "mode": "early\u001b[31m", "rounds": [{"to_fix": "\u001b]0;t\u0007"}], "reason": "a\u001b[2Jb\u009bc"}' > "$REC"
 TXT=$(IDD_STOP_LOG="$REC" python3 "$LOG" summary)
-assert_eq "no ESC byte reaches the terminal" 0 "$(printf '%s' "$TXT" | LC_ALL=C grep -c $'\x1b')"
+assert_eq "no ESC byte reaches the terminal (reason, mode, to-fix)" 0 "$(printf '%s' "$TXT" | LC_ALL=C grep -c $'\x1b')"
+assert_eq "… nor a C1 control (U+009B)" 0 "$(printf '%s' "$TXT" | LC_ALL=C grep -c $'\xc2\x9b')"
+# the default record path, when IDD_STOP_LOG is not set
+DH="$T/home"; mkdir -p "$DH"
+HOME="$DH" python3 "$LOG" append --cwd "$T/m1" --repo $REPO --issue 31 \
+  --answer '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}' --gate '{"status": "clean"}'
+assert_eq "without IDD_STOP_LOG the record is ~/.claude/.idd/stop-mode-runs.jsonl" 1 "$(lines "$DH/.claude/.idd/stop-mode-runs.jsonl")"
 # append writes no bytecode into the plugin directory
 NB="$T/nobyte"; mkdir -p "$NB/scripts"; cp "$LOG" "$CS" "$NB/scripts/"; cp -R "$PLUGIN/scripts/lib" "$NB/scripts/lib"
 find "$NB" -name __pycache__ -prune -exec rm -rf {} +
@@ -163,16 +178,22 @@ run_block() { # <cwd> <issue> <record path> ; prints the block's output then "RC
 }
 run_state "$T/b1" 21 exhaustive-blocking "not_clean:0:1"
 ANS='{"decision": "stop", "merge": false, "mode": "exhaustive-blocking", "reason": "coverage", "decided": true}'
-OUT=$(FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-b.jsonl")
+GOK='{"status": "not_clean", "blocking": 0}'        # the gate's answer, as the gate block leaves it
+OUT=$(GATE_JSON="$GOK" FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-b.jsonl")
 assert_eq "the block writes the record" 1 "$(lines "$T/rec-b.jsonl")"
 assert_grep "the block keeps next's answer" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 # spec scenario: A failed append does not change the run
 mkdir -p "$T/ro"; chmod 500 "$T/ro"
-OUT=$(FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/ro/sub/rec.jsonl")
+OUT=$(GATE_JSON="$GOK" FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/ro/sub/rec.jsonl")
 assert_grep "a failed append prints a warning" "stop-mode record was not written" "$OUT"
 assert_grep "… and leaves NEXT_JSON and NEXT_RC as next answered" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 assert_grep "… and the block ends as before" "RC=0 " "$OUT"
 chmod 700 "$T/ro"
+# #603 r2: the block with GATE_JSON lost (a separate Bash call) writes nothing and says so
+OUT=$(GATE_JSON= FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-lost.jsonl")
+assert_eq "a lost GATE_JSON: the block writes no record" 0 "$(lines "$T/rec-lost.jsonl")"
+assert_grep "… says the gate's answer is missing" "gate's answer" "$OUT"
+assert_grep "… and keeps next's answer" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 # #603 r1: the block hands the gate's answer to append, so a replaced gate writes nothing
 OUT=$(GATE_JSON='{"status": "unparseable", "replaced": true}' FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-g.jsonl")
 assert_eq "a replaced gate: the block writes no record" 0 "$(lines "$T/rec-g.jsonl")"

@@ -72,6 +72,12 @@ def cmd_append(argv):
         answer = json.loads(a["--answer"])
     except ValueError:
         return usage("--answer is not JSON")
+    if "--gate" in a and not a["--gate"].strip():
+        # #603 r2: the gate's answer was lost (it is set in another Bash call). Without it a replaced run cannot be
+        # told apart, so nothing is written: a missing line is better than one under another run's key.
+        print("stop-mode-log: no gate's answer was given (GATE_JSON is empty); the record is not written",
+              file=sys.stderr)
+        return 0
     try:
         gate = json.loads(a["--gate"]) if a.get("--gate") else {}
     except ValueError:
@@ -118,13 +124,13 @@ def read_records(path):
     """The last line per (repo, issue, created_at); unreadable lines are skipped and counted."""
     runs, bad = {}, 0
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, "rb") as fh:               # bytes: one line that is not UTF-8 must not stop the rest
             for raw in fh:
                 try:
-                    rec = json.loads(raw)
+                    rec = json.loads(raw.decode("utf-8"))
                     key = (rec["repo"], rec["issue"], rec["created_at"])
                     hash(key)
-                except (ValueError, KeyError, TypeError):
+                except (ValueError, KeyError, TypeError):  # UnicodeDecodeError is a ValueError
                     bad += 1
                     continue
                 if not well_formed(rec):       # parses, but not a line append writes
@@ -144,7 +150,7 @@ def well_formed(rec):
 
 
 def printable(text):
-    """A stored reason as text that cannot drive the terminal: control characters are shown escaped."""
+    """Stored text that cannot drive the terminal: control characters (C0 and C1) are shown escaped."""
     return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in str(text))
 
 
@@ -173,9 +179,9 @@ def cmd_summary(argv):
     print(f"stop-mode record: {path} ({len(records)} run(s){f', {bad} unreadable line(s)' if bad else ''})")
     for mode in sorted(modes):
         m = modes[mode]
-        print(f"{mode}: {m['runs']} run(s), next answered merge in {m['next_merge']}; rounds {m['rounds']}")
+        print(f"{printable(mode)}: {m['runs']} run(s), next answered merge in {m['next_merge']}; rounds {m['rounds']}")
         for seq in m["to_fix"]:
-            print(f"  to-fix {seq}")
+            print(f"  to-fix {printable(seq)}")
         for reason, k in sorted(m["reasons"].items(), key=lambda kv: -kv[1]):
             print(f"  stopped {k}×: {printable(reason)}")
     return 0
