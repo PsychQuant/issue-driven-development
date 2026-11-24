@@ -42,6 +42,8 @@ scenarios = {
     # every round recorded: Phase 4 takes next's answer as it is
     "recorded": [({"decision": "fix", "merge": False, "round": 1, "limit": 2, "decided": True}, {}),
                  ({"decision": "stop", "merge": True, "round": 2, "limit": 2, "decided": True}, {})],
+    # next could not record a fix answer at round 1 (undecided, round 1): its stop holds, no own count
+    "unrecorded-fix-answer": [({"decision": "stop", "merge": False, "round": 1, "limit": 2, "decided": False}, {})],
     # the gate says the run state was replaced
     "replaced-gate": [(dict(undecided), {"replaced": True})],
     # next says the run state was replaced
@@ -49,9 +51,9 @@ scenarios = {
 }
 class Abort(Exception):
     pass
-def abort_with_message(msg):
+def stop_replaced(msg):
     raise Abort(msg)
-env = {"ROUND": 0, "FALLBACK": False, "INTERACTION": "unattended", "abort_with_message": abort_with_message}
+env = {"ROUND": 0, "FALLBACK": False, "INTERACTION": "unattended", "stop_replaced": stop_replaced}
 for nxt, gate in scenarios[name]:
     env["nxt"], env["gate"] = nxt, gate
     try:
@@ -60,7 +62,7 @@ for nxt, gate in scenarios[name]:
         print("ABORT"); break
     exec(count, env)
     n = env["nxt"]
-    print(f"{n['decision']},{n['round']},{n.get('merge')}")
+    print(f"{n['decision']},{n['round']}")
     if n["decision"] != "fix":
         break
 PY
@@ -68,13 +70,16 @@ PY
 
 # spec-example: idd-pr-hitl-modes / rounds after an undecided next
 echo "── an undecided next: Phase 4 keeps its own count"
-assert_eq "a write that keeps failing stops at round 2" "$(printf 'fix,1,False\nstop,2,False')" "$(run always-undecided)"
-assert_eq "one unrecorded round: round 2 is the last, and it does not merge" "$(printf 'fix,1,False\nstop,2,False')" "$(run once-undecided)"
-assert_eq "one unrecorded round, round 2 clean: a stop that merges at round 2" "$(printf 'fix,1,False\nstop,2,True')" "$(run once-undecided-then-clean)"
+assert_eq "a write that keeps failing stops at round 2" "$(printf 'fix,1\nstop,2')" "$(run always-undecided)"
+assert_eq "one unrecorded round: round 2 is the last" "$(printf 'fix,1\nstop,2')" "$(run once-undecided)"
+assert_eq "one unrecorded round, round 2 clean: the loop stops at round 2" "$(printf 'fix,1\nstop,2')" "$(run once-undecided-then-clean)"
 echo "── every round recorded: next's answer as it is"
-assert_eq "recorded rounds follow next" "$(printf 'fix,1,False\nstop,2,True')" "$(run recorded)"
+assert_eq "recorded rounds follow next" "$(printf 'fix,1\nstop,2')" "$(run recorded)"
+assert_eq "next could not record a fix answer at round 1: its stop holds" "stop,1" "$(run unrecorded-fix-answer)"
+refute_grep "the block decides no merge" "merge=" "$(sed -n '/# >>> phase4-count/,/# <<< phase4-count/p' "$SKILL")"
 echo "── a replaced run stops"
-assert_eq "gate replaced → abort" "ABORT" "$(run replaced-gate)"
-assert_eq "next replaced → abort" "ABORT" "$(run replaced-next)"
+assert_eq "gate replaced → stop_replaced" "ABORT" "$(run replaced-gate)"
+assert_eq "next replaced → stop_replaced" "ABORT" "$(run replaced-next)"
+refute_grep "a replaced run does not go through abort_with_message (its cleanup is the other run's)" "abort_with_message" "$(sed -n '/# >>> phase4-replaced/,/# <<< phase4-replaced/p' "$SKILL")"
 
 print_summary

@@ -199,7 +199,8 @@ stop_case "no checks yet although a workflow runs on every pull_request" "guardr
 wf_scenario early-external; echo '[{"name": "cla", "bucket": "pass", "event": ""}]' > "$S/gh/checks-1.json"; run_stage
 stop_case "only an external status, the pull_request workflow never reports" "no pull_request check"
 wf_scenario late-pr-check; echo '[{"name": "cla", "bucket": "pass", "event": ""}]' > "$S/gh/checks-1.json"
-echo '[{"name": "cla", "bucket": "pass", "event": ""}, {"name": "ci", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-2.json"; run_stage
+echo '[{"name": "cla", "bucket": "pass", "event": ""}, {"name": "ci", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-2.json"
+CI_TIMEOUT=60 run_stage   # #602 r2 #16: waits for a second poll, like cipending; the wait never sleeps
 stop_case "the pull_request check appears later and fails" "failed: ci"
 pr_scenario pathfilter $'on:\n  pull_request:\n    paths: [docs/**]\n'; rm "$S/gh/checks-1.json"; run_stage
 assert_eq "a path-filtered pull_request workflow does not make the stage wait for a check" "merged" "$(printf '%s' "$OUT" | field status)"
@@ -1147,11 +1148,12 @@ ln -s "$S/real-state.json" "$C/.claude/.idd/state/idd-all-run-7.json"
 gate_run
 assert_exit "gate: a symlinked run state is unparseable (exit 2)" 2 "$RC"
 assert_eq "gate: … with a JSON answer" unparseable "$(printf '%s' "$G" | field status)"
-# #602 r1 #11: after a gate that could not write the record, next is undecided
-next_run
-assert_eq "next: after a gate that could not write → decided is false" False "$(nx decided)"
+# #602 r1 #11 (r2 #15): after a gate that could not write the record, next reads the readable record and is undecided
 restore_state() { rm -f "$C/.claude/.idd/state/idd-all-run-7.json"; mv "$S/real-state.json" "$C/.claude/.idd/state/idd-all-run-7.json"; }
 restore_state
+next_run
+assert_eq "next: after a gate that could not write → decided is false" False "$(nx decided)"
+assert_eq "next: … at round 0 (the record is readable and has no round)" 0 "$(nx round)"
 # spec-example: idd-pr-hitl-modes / replaced is marked and stops the run
 # #602 r1 #3/#4: a run replaced while the gate reads is marked replaced, so Phase 4 stops instead of fixing
 pr_scenario stop-gate-replaced-flag
@@ -1246,5 +1248,87 @@ assert_exit "next: … undecided" 3 "$RC"
 assert_grep "next: … and names the value" "'sometimes'" "$(nx reason)"
 NO_PREGATE=1 run_stage
 stop_case "run: a verify_stop value that is not a mode" "not null or one of"
+# #602 r2 #1: a verify report of this run that is not in the round record (an unrecorded round) blocks the merge
+# spec-example: idd-pr-hitl-modes / an unrecorded round blocks the merge
+pr_scenario stop-unrecorded-report
+LG=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 - "$CS" "$C" "$REPO" "$N" "$SHA" "$(base_of "$SHA")" <<'PY'
+import importlib.util, json, sys
+cs, cwd, repo, n, sha, base = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+st = m.read_state(cwd, repo, n)
+rc, gate = m.judge_report(repo, n, sha, base, m.parse_iso(st["created_at"]))
+print("ids", json.dumps(gate.get("reports_since")))
+rid = gate["comment_id"]
+st["rounds"] = [{"round": 1, "sha": sha, "status": "clean", "blocking": 0, "in_scope": 0, "low_in_scope": 0, "report_id": rid, "at": st["created_at"]}]
+st["attempts"] = [{"sha": sha, "report_id": rid, "at": st["created_at"]}]
+ok = "merge-ok"
+try:
+    m.merge_gate(st, rc, dict(gate, reports_since=[rid]), sha)
+except m.Stop as exc:
+    ok = f"refused {exc}"
+try:
+    m.merge_gate(st, rc, dict(gate, reports_since=[rid - 1, rid]), sha)
+    print(ok, "| unrecorded: merge-ok")
+except m.Stop as exc:
+    print(ok, "| unrecorded: refused", exc)
+PY
+)
+assert_grep "gate: the gate lists this run's report ids" "ids [" "$LG"
+assert_grep "merge: every report of this run in the record → the ledger does not refuse" "merge-ok |" "$LG"
+assert_grep "merge: a report of this run not in the record → refused" "unrecorded: refused" "$LG"
+assert_grep "merge: … and says a round was not recorded" "not recorded" "$LG"
+# #602 r2 #5/#10: a record deleted (reset) after the gate or next read it is a replaced run
+pr_scenario stop-deleted-replaced
+DR=$(python3 - "$CS" "$C" "$REPO" "$N" "$SHA" <<'PY'
+import importlib.util, os, sys
+cs, cwd, repo, n, sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+ident = m.run_identity(cwd, n)
+os.unlink(m.state_path(cwd, n))
+try:
+    m.record_round(cwd, repo, n, {"status": "clean", "comment_id": 5, "blocking": 0, "in_scope": 0}, sha, ident["created_at"], ident["run_id"])
+    print("gate: written-or-skipped")
+except m.Replaced:
+    print("gate: replaced")
+except m.Stop as exc:
+    print("gate: stop", exc)
+PY
+)
+assert_eq "gate: the record it read for was deleted → replaced" "gate: replaced" "$DR"
+# #602 r2 #4/#11: reset waits for a held lock, then deletes
+pr_scenario stop-reset-waits
+RW=$(python3 - "$CS" "$C" "$REPO" "$N" <<'PY'
+import importlib.util, io, os, subprocess, sys, time, contextlib
+cs, cwd, repo, n = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+hold = ("import fcntl,os,sys,time\nfd=os.open(sys.argv[1], os.O_RDWR|os.O_CREAT, 0o600)\nfcntl.flock(fd, fcntl.LOCK_EX)\n"
+        "print('held', flush=True)\ntime.sleep(1.0)\n")
+p = subprocess.Popen([sys.executable, "-c", hold, m.lock_path(cwd, n)], stdout=subprocess.PIPE, text=True)
+assert p.stdout.readline().strip() == "held"
+t = time.monotonic()
+with contextlib.redirect_stdout(io.StringIO()):
+    rc = m.cmd_reset(["--cwd", cwd, "--issue", n])
+waited = time.monotonic() - t; p.wait()
+print("waited" if waited >= 0.7 else f"no-wait {waited:.2f}", rc, os.path.exists(m.state_path(cwd, n)))
+PY
+)
+assert_eq "reset: waits for a lock another process holds, then deletes" "waited 0 False" "$RW"
+# #602 r2 #12/#14: reset with nothing to delete touches nothing, and a lock that cannot be opened does not keep the state
+new_scenario stop-reset-nothing
+python3 "$CS" reset --cwd "$C" --issue $N; RC=$?
+assert_exit "reset: nothing to delete → 0" 0 "$RC"
+assert_eq "reset: … and creates no state directory" no "$([ -e "$C/.claude/.idd/state" ] && echo yes || echo no)"
+pr_scenario stop-reset-badlock
+rm -f "$C/.claude/.idd/state/idd-all-run-7.lock"; ln -s "$S/elsewhere" "$C/.claude/.idd/state/idd-all-run-7.lock"
+python3 "$CS" reset --cwd "$C" --issue $N 2>"$S/err"; RC=$?
+assert_exit "reset: a lock path that cannot be used → still deletes, exit 0" 0 "$RC"
+assert_eq "reset: … the run state is gone" no "$([ -e "$C/.claude/.idd/state/idd-all-run-7.json" ] && echo yes || echo no)"
+assert_grep "reset: … and warns about the lock" "lock" "$(cat "$S/err")"
+# #602 r2 #19: init with a lock path that cannot be used is an error message, not a traceback
+new_scenario stop-init-badlock
+mkdir -p "$C/.claude/.idd/state"; ln -s "$S/elsewhere" "$C/.claude/.idd/state/idd-all-run-7.lock"
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --stop none 2>"$S/err"; RC=$?
+assert_exit "init: a lock path that cannot be used → exit 3" 3 "$RC"
+refute_grep "init: … without a traceback" "Traceback" "$(cat "$S/err")"
 
 print_summary close-stage

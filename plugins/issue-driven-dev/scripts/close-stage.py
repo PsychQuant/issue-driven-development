@@ -211,8 +211,12 @@ def cmd_init(argv):
         "created_at": iso(now()), "run_id": secrets.token_hex(8),   # #602: one identity per run, unique within a second
     }
     os.makedirs(os.path.dirname(spath), exist_ok=True)
-    with state_lock(cwd, a["--issue"]):
-        write_state(cwd, a["--issue"], state)
+    try:
+        with state_lock(cwd, a["--issue"]):
+            write_state(cwd, a["--issue"], state)
+    except (Stop, OSError) as exc:
+        print(f"close-stage: init failed: {exc}", file=sys.stderr)
+        return 3
     if os.path.exists(rpath):
         os.unlink(rpath)
     print(spath)
@@ -224,10 +228,25 @@ def cmd_reset(argv):
     if a is None or not a.get("--cwd") or not os.path.isdir(a["--cwd"]) or not re.match(r"^[0-9]+$", a.get("--issue", "")):
         return usage("reset needs --cwd <dir> --issue <digits>")
     try:
-        with state_lock(a["--cwd"], a["--issue"]):    # #602 r1: a gate holding the lock cannot write the record back
-            for path in (state_path(a["--cwd"], a["--issue"]), result_path(a["--cwd"], a["--issue"])):
-                if os.path.exists(path):
+        paths = [p for p in (state_path(a["--cwd"], a["--issue"]), result_path(a["--cwd"], a["--issue"]))
+                 if os.path.lexists(p)]
+        if not paths:
+            return 0           # #602 r2: nothing to delete — no state directory and no lock file are created
+        try:
+            lock = state_lock(a["--cwd"], a["--issue"])     # #602 r1: a gate holding the lock cannot write it back
+            lock.__enter__()
+        except (Stop, OSError) as exc:
+            # #602 r2: a lock that cannot be used must not keep an earlier run's state alive
+            print(f"close-stage: reset: the run-state lock could not be taken ({exc}); deleting without it",
+                  file=sys.stderr)
+            lock = None
+        try:
+            for path in paths:
+                if os.path.lexists(path):
                     os.unlink(path)
+        finally:
+            if lock is not None:
+                lock.__exit__(None, None, None)
     except (Stop, OSError) as exc:
         print(f"close-stage: reset failed: {exc}", file=sys.stderr)
         return 3
@@ -259,9 +278,19 @@ def latest_report(n, me, since, comments):
     return newest, ""
 
 
+def run_report_ids(n, me, since, comments):
+    """The ids of every `## Verify: #N` report this account posted since the run began (#602 r2). A round is a
+    report: one that is not in the round record is a round that was not recorded, and the record then undercounts
+    the rounds, whatever Phase 4 remembers."""
+    own = re.compile(rf"^## Verify: #{n}(?![0-9])")
+    return [c.get("id") for c in comments if c.get("login") == me and own.match(first_line(c.get("body")))
+            and (since is None or ts(c.get("created_at")) >= since)]
+
+
 def judge_report(repo, n, sha, base, since):
     me = session_login()
-    report, other = latest_report(n, me, since, issue_comments(repo, n))
+    comments = issue_comments(repo, n)
+    report, other = latest_report(n, me, since, comments)
     if report is None:
         when = f" since {iso(since)}" if since is not None else ""
         if other == "none":
@@ -299,6 +328,7 @@ def judge_report(repo, n, sha, base, since):
         return 2, dict(named, status="unparseable", reason=f"verify-gate.py gave no JSON (exit {rc})")
     result["comment_id"] = report.get("id")
     result["verify_url"] = report.get("html_url")
+    result["reports_since"] = run_report_ids(n, me, since, comments)   # #602 r2: the ledger merge_gate checks
     result["report_author"] = report.get("login")
     return (rc if rc in (0, 1, 2) else 2), result
 
@@ -415,12 +445,16 @@ def record_round(cwd, repo, n, result, sha, since=None, run_id=None):
     has not read yet. An unparseable
     report's counts are not kept. No run state (gate run outside /idd-all): nothing is recorded."""
     if not os.path.exists(state_path(cwd, n)):
+        if since is not None:   # #602 r2: the record this gate read for was deleted (a reset by another /idd-all)
+            raise Replaced("the run state this gate read for is gone; the result is not recorded")
         return
     with state_lock(cwd, n):
         _record_round_locked(cwd, repo, n, result, sha, since, run_id)
 
 
 def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
+    if not os.path.exists(state_path(cwd, n)) and since is not None:
+        raise Replaced("the run state this gate read for is gone; the result is not recorded")
     st = read_state(cwd, repo, n)
     # The report was picked with this run's start time (`since`). If another /idd-all replaced the run state while the
     # gate was reading (or there was none then), the result belongs to no round of this run (verify r4 #1). The check
@@ -476,6 +510,8 @@ def cmd_next(argv):
             # Not recorded means no fix: a loop whose stop cannot be guaranteed does not run another round.
             try:
                 with state_lock(a["--cwd"], a["--issue"]):   # #602: re-read under the lock; a replaced run is not written
+                    if not os.path.exists(state_path(a["--cwd"], a["--issue"])):
+                        raise Replaced("the run state was deleted while next was deciding")
                     now_st = read_state(a["--cwd"], a["--repo"], a["--issue"])
                     if (now_st.get("run_id"), now_st.get("created_at")) != (st.get("run_id"), st.get("created_at")):
                         raise Replaced("the run state was replaced while next was deciding")
@@ -494,6 +530,19 @@ def cmd_next(argv):
     answer["decided"] = bool(decided)   # #602: printed too, so Phase 4 can take its fallback without the exit code
     print(json.dumps(answer, ensure_ascii=False))
     return 0 if decided else 3
+
+
+def ledger_check(gate, rounds):
+    """#602 r2: every verify report of this run is a round of the record. One that is not is a round the gate could
+    not record, so the record undercounts the rounds: such a run is not merged, with or without a stop mode. Run
+    after the checks on the newest report, which name the more specific cause."""
+    ids = gate.get("reports_since")
+    if not isinstance(ids, list):
+        raise Stop("guardrail 1 (verify rounds) — the gate did not list this run's verify reports")
+    missing = [i for i in ids if i not in [r.get("report_id") for r in rounds]]
+    if missing:
+        raise Stop(f"guardrail 1 (verify rounds) — {len(missing)} verify report(s) of this run are not in the round "
+                   "record: a round was not recorded, so the rounds cannot be counted — not merging")
 
 
 def merge_gate(st, rc, gate, sha):
@@ -520,12 +569,14 @@ def merge_gate(st, rc, gate, sha):
         if st.get("interaction") == "unattended" and len(attempts) > 2:
             raise Stop(f"guardrail 1 (verify rounds) — {len(attempts)} verify rounds are recorded and a run without a stop "
                        "mode allows 2 verify rounds; a person reviews the fixes after the second")
+        ledger_check(gate, rounds)
         return
     if rc == 2:
         raise Stop(f"guardrail 1 (verify gate) — unparseable: {gate.get('reason')}")
     if not rounds or rounds[-1].get("report_id") != gate.get("comment_id") or rounds[-1].get("sha") != sha:
         raise Stop(f"guardrail 1 (stop mode {mode}) — the newest verify report is not the round the stop mode judged; "
                    "run close-stage.py gate and next again")
+    ledger_check(gate, rounds)
     # The table is applied to the counts the gate just re-read, not only to the record (verify r2 #1).
     for field in ("blocking", "in_scope", "low_in_scope"):
         if rounds[-1].get(field) != gate.get(field):
