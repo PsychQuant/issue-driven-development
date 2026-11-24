@@ -63,6 +63,17 @@ append "$T/a5" 15 '{"decision": "stop", "merge": false, "mode": null, "rounds": 
 assert_eq "no run state, stop undecided → nothing" 2 "$(lines "$REC")"
 assert_exit "no run state is not an error of append" 0 "$RC"
 
+# #603 r1: a run another /idd-all replaced (#602) no longer owns the run state; nothing is written for it
+run_state "$T/a6" 16 early "clean:0:0"
+append "$T/a6" 16 '{"decision": "stop", "merge": false, "mode": "exhaustive-blocking", "reason": "x", "decided": false, "replaced": true}'; RC=$?
+assert_eq "a replaced next answer → nothing" 2 "$(lines "$REC")"
+assert_exit "… and it is not an error" 0 "$RC"
+IDD_STOP_LOG="$REC" python3 "$LOG" append --cwd "$T/a6" --repo $REPO --issue 16 \
+  --answer '{"decision": "stop", "merge": false, "mode": "early", "reason": "no round yet", "decided": false}' \
+  --gate '{"status": "unparseable", "replaced": true}'; RC=$?
+assert_eq "a replaced gate → nothing, even when next's answer has no flag" 2 "$(lines "$REC")"
+assert_exit "… and it is not an error" 0 "$RC"
+
 L2=$(sed -n 2p "$REC" 2>/dev/null)
 assert_grep "the line names the repo" '"repo": "octo/demo"' "$L2"
 assert_grep "… the issue" '"issue": 12' "$L2"
@@ -92,6 +103,39 @@ EMPTY=$(IDD_STOP_LOG="$T/none.jsonl" python3 "$LOG" summary --json); RC=$?
 assert_exit "summary of a missing record exits 0" 0 "$RC"
 assert_eq "… and counts no run" 0 "$(printf '%s' "$EMPTY" | jq -r '[.modes[].runs] | add // 0')"
 
+echo "── the record file and odd lines"
+# #603 r1: the record is the user's own: 0600, and a symbolic link at its path is not followed
+REC="$T/rec-m.jsonl"
+run_state "$T/m1" 31 early "clean:0:0"
+append "$T/m1" 31 '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}'
+assert_eq "a new record file is 0600" 600 "$(stat -f %Lp "$REC" 2>/dev/null || stat -c %a "$REC")"
+echo target > "$T/target.txt"; ln -s "$T/target.txt" "$T/rec-link.jsonl"
+REC="$T/rec-link.jsonl" append "$T/m1" 31 '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}' 2>/dev/null; RC=$?
+assert_exit "a symbolic link at the record path is refused" 1 "$RC"
+assert_eq "… and its target is untouched" target "$(cat "$T/target.txt")"
+# lines that parse as JSON but have the wrong shape are counted as unreadable, not a crash
+REC="$T/rec-odd.jsonl"
+cp "$T/rec-m.jsonl" "$REC"
+printf '%s\n' '{"repo": "x", "issue": 1, "created_at": "t"}' '{"repo": "x", "issue": 2, "created_at": "t", "mode": "early", "rounds": {"a": 1}}' \
+  '{"repo": ["x"], "issue": 3, "created_at": "t", "mode": "early", "rounds": []}' \
+  '{"repo": "x", "issue": 4, "created_at": "t", "mode": "early", "rounds": [], "reason": {"a": 1}}' >> "$REC"
+SUM=$(IDD_STOP_LOG="$REC" python3 "$LOG" summary --json); RC=$?
+assert_exit "summary --json survives odd lines" 0 "$RC"
+assert_eq "… and counts them as unreadable" 4 "$(printf '%s' "$SUM" | jq -r '.unreadable_lines')"
+IDD_STOP_LOG="$REC" python3 "$LOG" summary >/dev/null; RC=$?
+assert_exit "summary text survives odd lines" 0 "$RC"
+# a reason with a terminal control sequence is printed escaped
+REC="$T/rec-esc.jsonl"
+printf '%s\n' '{"repo": "x", "issue": 5, "created_at": "t", "mode": "early", "rounds": [], "reason": "a\u001b[2Jb"}' > "$REC"
+TXT=$(IDD_STOP_LOG="$REC" python3 "$LOG" summary)
+assert_eq "no ESC byte reaches the terminal" 0 "$(printf '%s' "$TXT" | LC_ALL=C grep -c $'\x1b')"
+# append writes no bytecode into the plugin directory
+NB="$T/nobyte"; mkdir -p "$NB/scripts"; cp "$LOG" "$CS" "$NB/scripts/"; cp -R "$PLUGIN/scripts/lib" "$NB/scripts/lib"
+find "$NB" -name __pycache__ -prune -exec rm -rf {} +
+IDD_STOP_LOG="$T/rec-nb.jsonl" python3 "$NB/scripts/stop-mode-log.py" append --cwd "$T/m1" --repo $REPO --issue 31 \
+  --answer '{"decision": "stop", "merge": true, "mode": "early", "reason": "clean", "decided": true}'
+assert_eq "append leaves no __pycache__" 0 "$(find "$NB" -name __pycache__ | wc -l | tr -d ' ')"
+
 echo "── the Phase 4 next block of idd-all"
 # The fenced bash block that runs `next` (not the --read-only one of Phase 5c).
 BLOCK="$T/next-block.sh"
@@ -113,7 +157,7 @@ if __name__ == "__main__":
     print(os.environ["FAKE_ANSWER"]); sys.exit(int(os.environ.get("FAKE_RC", "0")))
 PY
 run_block() { # <cwd> <issue> <record path> ; prints the block's output then "RC=<rc> NEXT_RC=<rc> NEXT_JSON=<json>"
-  ( cd "$T" && CLAUDE_PLUGIN_ROOT="$ROOT" REAL_CS="$CS" IDD_STOP_LOG="$3" CWD="$1" GITHUB_REPO=$REPO N="$2" \
+  ( cd "$T" && CLAUDE_PLUGIN_ROOT="$ROOT" REAL_CS="$CS" IDD_STOP_LOG="$3" CWD="$1" GITHUB_REPO=$REPO N="$2" GATE_JSON="${GATE_JSON:-}" \
       bash -c "$(cat "$BLOCK")"'
       echo "RC=$? NEXT_RC=$NEXT_RC NEXT_JSON=$NEXT_JSON"' 2>&1 )
 }
@@ -129,6 +173,10 @@ assert_grep "a failed append prints a warning" "stop-mode record was not written
 assert_grep "… and leaves NEXT_JSON and NEXT_RC as next answered" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 assert_grep "… and the block ends as before" "RC=0 " "$OUT"
 chmod 700 "$T/ro"
+# #603 r1: the block hands the gate's answer to append, so a replaced gate writes nothing
+OUT=$(GATE_JSON='{"status": "unparseable", "replaced": true}' FAKE_ANSWER="$ANS" run_block "$T/b1" 21 "$T/rec-g.jsonl")
+assert_eq "a replaced gate: the block writes no record" 0 "$(lines "$T/rec-g.jsonl")"
+assert_grep "… and keeps next's answer" "NEXT_RC=0 NEXT_JSON=$ANS" "$OUT"
 UND='{"decision": "stop", "merge": false, "mode": "exhaustive-blocking", "reason": "x", "decided": false}'
 OUT=$(FAKE_ANSWER="$UND" FAKE_RC=3 run_block "$T/b1" 21 "$T/rec-c.jsonl")
 assert_grep "an undecided next keeps NEXT_RC 3" "NEXT_RC=3 " "$OUT"

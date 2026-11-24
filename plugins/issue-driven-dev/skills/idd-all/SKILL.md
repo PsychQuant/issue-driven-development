@@ -1161,7 +1161,9 @@ echo "→ next (round $(printf '%s' "$NEXT_JSON" | jq -r '.round // "?"')): $NEX
 [ "$NEXT_RC" -eq 0 ] || echo "⚠ next could not decide (exit $NEXT_RC) — the answer is stop without a merge"
 # #603: a run with a stop mode records how its loop ended (writes only for an answer other than fix). The record is
 # outside the repository; a failed write only warns and changes nothing about the run.
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/stop-mode-log.py" append --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --answer "$NEXT_JSON" \
+# A run another /idd-all replaced (#602) writes nothing: the gate's answer goes along, because after a replaced
+# gate next reads the new run's state and its answer carries no `replaced`.
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/stop-mode-log.py" append --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --answer "$NEXT_JSON" --gate "${GATE_JSON:-}" \
   || echo "⚠ the stop-mode record was not written (the run goes on as next answered)"
 ```
 

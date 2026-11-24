@@ -6,9 +6,11 @@ A finished run leaves nothing to measure otherwise: the per-round counts live on
 `stop mode:` line is printed to the conversation only. Spec: openspec idd-pr-hitl-modes, "A run with a stop
 mode leaves a record of how its verify loop ended".
 
-  append  --cwd <dir> --repo owner/repo --issue <n> --answer <next's JSON>
+  append  --cwd <dir> --repo owner/repo --issue <n> --answer <next's JSON> [--gate <the gate's JSON>]
           When the run has a stop mode and the answer is not `fix`, append one JSON line to the record.
-          A run without a stop mode, a fix answer, or no readable run state writes nothing (exit 0).
+          A run without a stop mode, a fix answer, no readable run state, or a run another /idd-all replaced
+          (`replaced` in next's or the gate's answer, #602) writes nothing (exit 0): a replaced run no longer
+          owns the run state on disk, which belongs to the run that replaced it.
           Exit 1 when the line could not be written; idd-all Phase 4 only warns then.
   summary [--json]
           Group the records by mode, the last line per (repo, issue, created_at): runs, how many `next`
@@ -28,6 +30,7 @@ import json
 import os
 import sys
 
+sys.dont_write_bytecode = True      # before any import from lib/ or close-stage.py: no __pycache__ in the plugin
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 from stopmode import MODES, _brief  # noqa: E402  (one definition of a round's to-fix count)
@@ -62,14 +65,22 @@ def parse(argv, flags):
 
 
 def cmd_append(argv):
-    a = parse(argv, ("--cwd", "--repo", "--issue", "--answer"))
-    if a is None or len(a) != 4 or not a["--issue"].isdigit():
-        return usage("append needs --cwd <dir> --repo owner/repo --issue <digits> --answer <json>")
+    a = parse(argv, ("--cwd", "--repo", "--issue", "--answer", "--gate"))
+    if a is None or not {"--cwd", "--repo", "--issue", "--answer"} <= set(a) or not a["--issue"].isdigit():
+        return usage("append needs --cwd <dir> --repo owner/repo --issue <digits> --answer <json> [--gate <json>]")
     try:
         answer = json.loads(a["--answer"])
     except ValueError:
         return usage("--answer is not JSON")
+    try:
+        gate = json.loads(a["--gate"]) if a.get("--gate") else {}
+    except ValueError:
+        gate = {}                                  # an unreadable gate answer says nothing about replacement
     if not isinstance(answer, dict) or answer.get("decision") == "fix":
+        return 0
+    # #603 r1: a replaced run (#602) does not own the run state any more; after a replaced gate, next reads the
+    # new run's state and its answer carries no flag, so the gate's answer is checked too.
+    if answer.get("replaced") or (isinstance(gate, dict) and gate.get("replaced")):
         return 0
     cs = close_stage()
     try:
@@ -92,8 +103,10 @@ def cmd_append(argv):
     }
     path = record_path()
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        # the user's own record: 0600 when created, and a symbolic link at its path is not followed
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(line, ensure_ascii=False) + "\n")
     except OSError as exc:
         print(f"stop-mode-log: could not write {path}: {exc}", file=sys.stderr)
@@ -110,13 +123,29 @@ def read_records(path):
                 try:
                     rec = json.loads(raw)
                     key = (rec["repo"], rec["issue"], rec["created_at"])
+                    hash(key)
                 except (ValueError, KeyError, TypeError):
+                    bad += 1
+                    continue
+                if not well_formed(rec):       # parses, but not a line append writes
                     bad += 1
                     continue
                 runs[key] = rec
     except FileNotFoundError:
         pass
     return list(runs.values()), bad
+
+
+def well_formed(rec):
+    rounds = rec.get("rounds", [])
+    return (isinstance(rec, dict) and isinstance(rec.get("mode"), str)
+            and isinstance(rounds, list) and all(isinstance(r, dict) for r in rounds)
+            and (rec.get("reason") is None or isinstance(rec.get("reason"), str)))
+
+
+def printable(text):
+    """A stored reason as text that cannot drive the terminal: control characters are shown escaped."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in str(text))
 
 
 def sequence(rec):
@@ -148,7 +177,7 @@ def cmd_summary(argv):
         for seq in m["to_fix"]:
             print(f"  to-fix {seq}")
         for reason, k in sorted(m["reasons"].items(), key=lambda kv: -kv[1]):
-            print(f"  stopped {k}×: {reason}")
+            print(f"  stopped {k}×: {printable(reason)}")
     return 0
 
 
