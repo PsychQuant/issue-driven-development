@@ -1150,6 +1150,8 @@ GATE_BASE=(--base "$BASE_SHA")
 [ "$(jq -r 'if (.review or .in_chain) then "no" else "yes" end' "$CWD/.claude/.idd/state/idd-all-run-$N.json" 2>/dev/null)" = yes ] || GATE_BASE=()
 GATE_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}")
 echo "→ verify gate (head $HEAD_SHA${GATE_BASE:+, range from $BASE_SHA}): $GATE_JSON"
+# #603 r3: the next block is another Bash call, which does not keep GATE_JSON; it reads the answer from this file
+printf '%s\n' "$GATE_JSON" > "$CWD/.claude/.idd/state/idd-all-gate-$N.json" 2>/dev/null || true
 ```
 
 gate 讀到這次 run 還沒讀過的報告時，會把這一輪的計數記進 run-state（#595）。接著問 `next` 下一步，**在同一個回合、gate 之後立刻跑**：
@@ -1159,6 +1161,15 @@ case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 4: issue number is not numeric: $N"
 NEXT_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" next --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"); NEXT_RC=$?
 echo "→ next (round $(printf '%s' "$NEXT_JSON" | jq -r '.round // "?"')): $NEXT_JSON"
 [ "$NEXT_RC" -eq 0 ] || echo "⚠ next could not decide (exit $NEXT_RC) — the answer is stop without a merge"
+# #603: a run with a stop mode records how its loop ended (writes only for an answer other than fix). The record is
+# outside the repository; a failed write only warns and changes nothing about the run.
+# A run another /idd-all replaced (#602) writes nothing: the gate's answer goes along (the file the gate block
+# wrote), because after a replaced gate next reads the new run's state and its answer carries no `replaced`. A
+# missing, unreadable or other-round gate file writes no record and says so; do not run this block again for it —
+# asking next twice after a fix answer turns it into a stop.
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/stop-mode-log.py" append --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --answer "$NEXT_JSON" \
+  --gate-file "$CWD/.claude/.idd/state/idd-all-gate-$N.json" \
+  || echo "⚠ the stop-mode record was not written (the run goes on as next answered)"
 ```
 
 ```python
@@ -1652,7 +1663,7 @@ Undo:                                                   (only when something was
 
 這行 `Next:` 是 Phase 6 要人接手的地方；merge 與 close 都完成、又不是 Spectra tier 時沒有 `Next:`。
 
-**清理**：回報印出後刪掉 `$CWD/.claude/.idd/state/idd-all-run-$N.json` 與 `idd-all-result-$N.json`，下一次 run 不會讀到這次的值。
+**清理**：回報印出後刪掉 `$CWD/.claude/.idd/state/idd-all-run-$N.json`、`idd-all-result-$N.json` 與 Phase 4 gate 區塊寫的 `idd-all-gate-$N.json`（#603），下一次 run 不會讀到這次的值。
 
 #### `--review` report
 
