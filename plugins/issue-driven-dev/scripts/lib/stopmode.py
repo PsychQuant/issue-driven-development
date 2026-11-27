@@ -20,6 +20,14 @@ The to-fix count is what the loop fixes: Blocking plus the In-scope fix findings
 LOW. A run with --review or --in-chain fixes Blocking only and never merges, so its
 count is Blocking (also in exhaustive-all).
 
+The report's coverage and reviewers lines (#607), recorded in the round by the gate:
+- an incomplete coverage line (`X / Y requirements addressed`, X < Y) counts as one
+  Blocking finding in every rule above, so the loop fixes it under the same stop rules
+  and a stop merges only once it is complete — the close stage refuses a merge without
+  it. A round recorded before #607 has no field and counts as incomplete, as there;
+- an incomplete reviewers line (`R / T reviewers completed`, R < T) is a degraded verify
+  that a fix does not change: a stop that would merge stops without a merge.
+
 Two rules hold in every run (verify round 1 of #595):
 - a gate result that `next` already answered with fix (same commit, same report or no
   report) is answered stop without a merge: a new round brings a new commit or a new
@@ -33,10 +41,20 @@ MODES = ("early", "exhaustive-blocking", "exhaustive-all")
 NO_MODE_ROUNDS = {"unattended": 2, "attended": 1}
 
 
+def coverage_gap(r):
+    """1 when the round's coverage line is not recorded as complete (#607): it counts as a Blocking finding."""
+    return 0 if r.get("coverage_complete") is True else 1
+
+
+def blocking(r):
+    """The round's Blocking count, with an incomplete coverage line counted as one more (#607)."""
+    return r["blocking"] + coverage_gap(r)
+
+
 def to_fix(r, blocking_only):
     if blocking_only:
-        return r["blocking"]
-    return r["blocking"] + r["in_scope"] - (r.get("low_in_scope") or 0)
+        return blocking(r)
+    return blocking(r) + r["in_scope"] - (r.get("low_in_scope") or 0)
 
 
 def _brief(r, blocking_only=False):
@@ -102,6 +120,10 @@ def decide(st):
         return dict(ans, decision="stop", merge=False,
                     reason=f"no new report or commit followed the fix answer for this result ({ans['reason']})")
     rounds = st.get("rounds") or []
+    # A degraded verify (#607): fixing the code does not complete the reviewers line, so the stop does not merge.
+    if ans["merge"] and ans.get("mode") is not None and rounds and rounds[-1].get("reviewers_complete") is not True:
+        return dict(ans, merge=False, reason=f"{ans['reason']}; the report's reviewers line is incomplete (a degraded "
+                    "verify), so the stop does not merge")
     high = rounds[-1].get("high_in_scope") if rounds else None
     if ans["merge"] and ans.get("mode") is not None and isinstance(high, int) and high > 0:
         return dict(ans, merge=False, reason=f"{ans['reason']}; {high} In-scope fix finding(s) of severity CRITICAL, "
@@ -133,27 +155,28 @@ def _decide(st):
     tf = to_fix(cur, never_merges)
     prev = rounds[-2] if k >= 2 and _counted(rounds[-2]) else None
     may_merge = not never_merges
+    gap = "; its coverage line is incomplete, which counts as one Blocking finding" if coverage_gap(cur) else ""
     if mode == "early":
         if tf == 0:
-            return _answer("stop", may_merge and cur["blocking"] == 0, f"round {k} leaves nothing to fix",
+            return _answer("stop", may_merge and blocking(cur) == 0, f"round {k} leaves nothing to fix",
                            mode, rounds, never_merges, round=k, to_fix=tf)
         if prev is not None and tf >= to_fix(prev, never_merges):
             p = to_fix(prev, never_merges)
-            return _answer("stop", may_merge and cur["blocking"] == 0, f"the to-fix count did not fall ({p} → {tf})",
+            return _answer("stop", may_merge and blocking(cur) == 0, f"the to-fix count did not fall ({p} → {tf}){gap}",
                            mode, rounds, never_merges, round=k, to_fix=tf)
-        return _answer("fix", False, f"round {k} has {tf} finding(s) to fix", mode, rounds, never_merges, round=k, to_fix=tf)
+        return _answer("fix", False, f"round {k} has {tf} finding(s) to fix{gap}", mode, rounds, never_merges, round=k, to_fix=tf)
     if mode == "exhaustive-blocking":
-        if cur["blocking"] == 0:
+        if blocking(cur) == 0:
             return _answer("stop", may_merge, f"round {k} has no Blocking finding", mode, rounds, never_merges, round=k, to_fix=tf)
         if k >= 3 and all(_counted(r) for r in rounds[-3:]):
-            a, b, c = (r["blocking"] for r in rounds[-3:])
+            a, b, c = (blocking(r) for r in rounds[-3:])
             if c >= b and b >= a:
-                return _answer("stop", False, f"Blocking did not fall in the last two rounds ({a} → {b} → {c})",
+                return _answer("stop", False, f"Blocking did not fall in the last two rounds ({a} → {b} → {c}){gap}",
                                mode, rounds, never_merges, round=k, to_fix=tf)
-        return _answer("fix", False, f"round {k} has {cur['blocking']} Blocking finding(s)", mode, rounds, never_merges, round=k, to_fix=tf)
+        return _answer("fix", False, f"round {k} has {cur['blocking']} Blocking finding(s){gap}", mode, rounds, never_merges, round=k, to_fix=tf)
     # exhaustive-all: no round limit; LOW In-scope fix findings count too
-    left = cur["blocking"] + (0 if never_merges else cur["in_scope"])
+    left = blocking(cur) + (0 if never_merges else cur["in_scope"])
     if left == 0:
         why = f"round {k} has no Blocking finding" if never_merges else f"round {k} leaves no finding"
         return _answer("stop", may_merge, why, mode, rounds, never_merges, round=k, to_fix=0)
-    return _answer("fix", False, f"round {k} leaves {left} finding(s)", mode, rounds, never_merges, round=k, to_fix=left)
+    return _answer("fix", False, f"round {k} leaves {left} finding(s){gap}", mode, rounds, never_merges, round=k, to_fix=left)

@@ -486,6 +486,9 @@ def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
                        "low_in_scope": result.get("low_in_scope") if judged else None,
                        "high_in_scope": result.get("high_in_scope") if judged else None,
                        "rejected": result.get("rejected") if judged else None,
+                       # #607: next counts an incomplete coverage line and a degraded verify as merge_gate does
+                       "coverage_complete": result.get("coverage_complete") if judged else None,
+                       "reviewers_complete": result.get("reviewers_complete") if judged else None,
                        "report_id": rid, "at": at})
         seen.append(rid)
     st["rounds"], st["attempts"] = rounds, attempts
@@ -598,7 +601,7 @@ def merge_gate(st, rc, gate, sha):
     for field, what in (("coverage_complete", "a complete coverage line (X / X requirements addressed)"),
                         ("reviewers_complete", "a complete reviewers line (X / X reviewers completed)")):
         if gate.get(field) is not True:
-            raise Stop(f"guardrail 1 (stop mode {mode}) — the report has no {what}; a merge needs it as a clean one does")
+            raise Stop(f"guardrail 1 (stop mode {mode}) — the report lacks {what}; a merge needs it as a clean one does")
 
 
 # ── run: shared checks ─────────────────────────────────────────────────────

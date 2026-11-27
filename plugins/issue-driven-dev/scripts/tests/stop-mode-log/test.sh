@@ -34,7 +34,8 @@ st = json.load(open(p))
 for i, r in enumerate([x for x in spec.split(",") if x], 1):
     status, blocking, in_scope = r.split(":")
     st["rounds"].append({"round": i, "sha": f"{i:040x}", "status": status, "blocking": int(blocking),
-                         "in_scope": int(in_scope), "report_id": 1000 + i, "at": st["created_at"]})
+                         "in_scope": int(in_scope), "report_id": 1000 + i, "at": st["created_at"],
+                         "coverage_complete": True, "reviewers_complete": True})   # as the gate records them (#607)
 json.dump(st, open(p, "w"))
 PY
 }

@@ -760,6 +760,18 @@ for k, triple in enumerate([t for t in spec.split(";") if t], 1):
                    "rejected": rejected if k == len(spec.split(";")) else 0,
                    "status": status if k == len(spec.split(";")) else "not_clean",
                    "report_id": 100 + k, "at": at})
+# #607: the gate records whether the coverage and reviewers lines are complete; the last round takes COV / REVW
+# (true, false, or none to leave the field out, as a round recorded before #607), earlier rounds are complete
+import os
+for r in rounds:
+    r["coverage_complete"] = r["reviewers_complete"] = True
+if rounds:
+    for key, env in (("coverage_complete", "COV"), ("reviewers_complete", "REVW")):
+        v = os.environ.get(env, "true")
+        if v == "none":
+            rounds[-1].pop(key)
+        else:
+            rounds[-1][key] = v == "true"
 st = {"repo": "o/r", "issue": 7, "path": "PR", "requested_path": "PR", "interaction": inter, "branch": "idd/7-x",
       "default": "main", "review": review == "yes", "in_chain": False, "created_at": at,
       "verify_stop": None if mode == "none" else mode, "rounds": rounds,
@@ -792,6 +804,36 @@ assert_eq "early: only LOW in-scope findings → merge" True "$(nx merge)"
 new_scenario stop-early-blocking; write_rounds early unattended no "1,2,0;1,2,0"; next_run
 assert_eq "early 3,3 with 1 Blocking: stop" stop "$(nx decision)"
 assert_eq "early 3,3 with 1 Blocking: no merge" False "$(nx merge)"
+
+# spec-example: idd-pr-hitl-modes / an incomplete coverage line counts as one Blocking finding
+new_scenario stop-coverage-gap
+COV=false write_rounds exhaustive-blocking unattended no "0,2,0"; next_run
+assert_eq "exhaustive-blocking, 0 Blocking, coverage incomplete: fix" fix "$(nx decision)"
+assert_grep "… the reason names the coverage line" "coverage line" "$(nx reason)"
+COV=false write_rounds early unattended no "0,1,1"; next_run
+assert_eq "early, nothing else to fix, coverage incomplete: fix" fix "$(nx decision)"
+COV=false write_rounds exhaustive-all unattended no "0,0,0"; next_run
+assert_eq "exhaustive-all, no finding, coverage incomplete: fix" fix "$(nx decision)"
+COV=true write_rounds exhaustive-blocking unattended no "0,2,0;0,2,0"; next_run
+assert_eq "exhaustive-blocking, coverage complete in round 2: stop" stop "$(nx decision)"
+assert_eq "… and merge" True "$(nx merge)"
+COV=false write_rounds exhaustive-blocking unattended no "1,0,0;1,0,0;0,0,0"; next_run
+assert_eq "exhaustive-blocking 1 → 1 → 0 with coverage incomplete (1 → 1 → 1): stop" stop "$(nx decision)"
+assert_eq "… without a merge" False "$(nx merge)"
+COV=false write_rounds early unattended no "0,1,0;0,0,0"; next_run
+assert_eq "early 1 → 1 (coverage gap counted): the count did not fall, stop" stop "$(nx decision)"
+assert_eq "… without a merge, the gap counts as Blocking" False "$(nx merge)"
+COV=none write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
+assert_eq "a round recorded before #607 (no coverage field): counted as incomplete" fix "$(nx decision)"
+
+# spec-example: idd-pr-hitl-modes / an incomplete reviewers line stops without a merge
+new_scenario stop-reviewers-gap
+REVW=false write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
+assert_eq "exhaustive-blocking, 0 Blocking, reviewers incomplete: stop" stop "$(nx decision)"
+assert_eq "… without a merge" False "$(nx merge)"
+assert_grep "… the reason names the reviewers line" "reviewers line" "$(nx reason)"
+REVW=false write_rounds exhaustive-blocking unattended no "2,0,0"; next_run
+assert_eq "reviewers incomplete with Blocking left: fix as before" fix "$(nx decision)"
 
 # spec: exhaustive-blocking reaches zero Blocking
 new_scenario stop-exb-zero; write_rounds exhaustive-blocking unattended no "2,0,0;1,0,0;0,3,0"; next_run
