@@ -855,6 +855,36 @@ assert_eq "early, a round with a Rejected finding: no merge" False "$(nx merge)"
 write_rounds early unattended no "0,6,0;0,4,0"; next_run
 assert_eq "next lists the to-fix count of each round" "6 4" "$(printf '%s' "$NX" | python3 -c 'import json,sys; print(" ".join(str(r["to_fix"]) for r in json.load(sys.stdin)["rounds"]))')"
 
+# spec-example: idd-pr-hitl-modes / the gate writes its answer without following a symbolic link
+pr_scenario gate-answer-file; init_state PR PR no no unattended exhaustive-blocking
+GF="$C/.claude/.idd/state/idd-all-gate-7.json"
+gate_run
+assert_eq "gate without --write-answer leaves no gate file" no "$([ -e "$GF" ] && echo yes || echo no)"
+gate_write() { G=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" --write-answer yes 2>"$S/gerr"); RC=$?; }
+gate_write
+assert_eq "gate --write-answer: the file holds the gate's answer" "$G" "$(cat "$GF")"
+assert_eq "… readable by the owner only" 600 "$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$GF")"
+rm -f "$GF"; echo original > "$S/elsewhere"; ln -s "$S/elsewhere" "$GF"
+gate_write
+assert_eq "a symlink at the gate file: what it points to is unchanged" original "$(cat "$S/elsewhere")"
+assert_grep "… the gate warns" "answer was not written" "$(cat "$S/gerr")"
+assert_grep "… and still answers on stdout" '"status"' "$G"
+rm -f "$GF"; printf '{"old": true}\n' > "$GF"
+python3 - "$CS" "$C" <<'EOF'
+import importlib.util, io, os, sys, contextlib
+spec = importlib.util.spec_from_file_location("cs", sys.argv[1]); cs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cs)
+def refuse(*a, **k):
+    raise OSError("disk full")
+os.replace = refuse
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    cs.write_gate_answer(sys.argv[2], "7", {"status": "clean"})
+assert "answer was not written" in err.getvalue(), err.getvalue()
+EOF
+assert_eq "a failed write removes the previous answer" no "$([ -e "$GF" ] && echo yes || echo no)"
+assert_eq "… and leaves no temporary file" 0 "$(ls "$C/.claude/.idd/state" | grep -c '^idd-all-gate-7.json\..*\.tmp$')"
+
 # spec: the same report read twice is one round
 pr_scenario stop-gate-rounds; init_state PR PR no no unattended early
 gate_run; gate_run

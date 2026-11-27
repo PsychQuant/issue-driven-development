@@ -1148,10 +1148,11 @@ BASE_SHA=$(git -C "$CWD" merge-base "origin/$DEFAULT_BRANCH" "$HEAD_SHA")
 # --review / --in-chain runs never merge and verify does not pin their range: compare the head only (r4 #44)
 GATE_BASE=(--base "$BASE_SHA")
 [ "$(jq -r 'if (.review or .in_chain) then "no" else "yes" end' "$CWD/.claude/.idd/state/idd-all-run-$N.json" 2>/dev/null)" = yes ] || GATE_BASE=()
-GATE_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}")
+# #603 r3: the next block is another Bash call, which does not keep GATE_JSON; --write-answer yes leaves the answer
+# in .claude/.idd/state/idd-all-gate-$N.json for it, through the run state's guards (#623: a symbolic link is
+# refused, not followed; a failed write removes the old answer and only warns)
+GATE_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}" --write-answer yes)
 echo "→ verify gate (head $HEAD_SHA${GATE_BASE:+, range from $BASE_SHA}): $GATE_JSON"
-# #603 r3: the next block is another Bash call, which does not keep GATE_JSON; it reads the answer from this file
-printf '%s\n' "$GATE_JSON" > "$CWD/.claude/.idd/state/idd-all-gate-$N.json" 2>/dev/null || true
 ```
 
 gate 讀到這次 run 還沒讀過的報告時，會把這一輪的計數記進 run-state（#595）。接著問 `next` 下一步，**在同一個回合、gate 之後立刻跑**：

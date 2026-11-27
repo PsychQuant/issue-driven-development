@@ -28,6 +28,7 @@ import datetime
 import importlib.util
 import json
 import os
+import stat
 import sys
 
 sys.dont_write_bytecode = True      # before any import from lib/ or close-stage.py: no __pycache__ in the plugin
@@ -69,11 +70,23 @@ def gate_answer(a):
     a direct call, no gate check ({}). #603 r3: an answer given but empty, unreadable, not a JSON object, or from
     another round than next's cannot tell a replaced run apart, so it is not used."""
     if "--gate-file" in a:
+        # #623: only this issue's gate file in its state directory, as a regular file, never through a symbolic link
+        shown = json.dumps(a["--gate-file"], ensure_ascii=True)
         try:
-            with open(a["--gate-file"], encoding="utf-8") as fh:
+            here = close_stage().state_dir(a["--cwd"])
+        except Exception as exc:
+            return None, f"the state directory cannot be used ({exc.__class__.__name__})"
+        if os.path.realpath(os.path.dirname(os.path.abspath(a["--gate-file"]))) != here \
+                or os.path.basename(a["--gate-file"]) != f"idd-all-gate-{a['--issue']}.json":
+            return None, f"the gate's answer file {shown} is not this issue's gate file in {json.dumps(here)}"
+        try:
+            fd = os.open(a["--gate-file"], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, encoding="utf-8") as fh:
+                if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                    return None, f"the gate's answer file {shown} is not a regular file"
                 text = fh.read()
         except (OSError, ValueError):
-            return None, f"the gate's answer file {a['--gate-file']} cannot be read"
+            return None, f"the gate's answer file {shown} cannot be read"
     elif "--gate" in a:
         text = a["--gate"]
     else:

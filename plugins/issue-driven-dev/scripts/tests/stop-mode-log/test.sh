@@ -196,7 +196,39 @@ assert_grep "the next block calls stop-mode-log append" 'stop-mode-log.py" appen
 assert_grep "… with the gate file" '--gate-file "$CWD/.claude/.idd/state/idd-all-gate-$N.json"' "$(cat "$BLOCK")"
 # #603 r3: the gate block keeps its answer in a file, which survives the Bash call (a variable does not)
 GBLOCK=$(awk '/^```bash$/{inb=1; buf=""; next} /^```$/ && inb {inb=0; if (buf ~ /GATE_JSON=\$\(python3/) {printf "%s", buf; exit} next} inb {buf = buf $0 "\n"}' "$SKILL")
-assert_grep "the gate block writes its answer to the gate file" '"$CWD/.claude/.idd/state/idd-all-gate-$N.json"' "$GBLOCK"
+# spec-example: idd-pr-hitl-modes / the gate block has the gate write its answer
+# #623: the gate writes the file itself, through close-stage's guards; the block has no shell redirect to it
+assert_grep "the gate block asks the gate to write its answer" 'gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}" --write-answer yes' "$GBLOCK"
+assert_eq "… and does not redirect into the gate file" 0 "$(printf '%s' "$GBLOCK" | grep -c '> *"$CWD/.claude/.idd/state/idd-all-gate')"
+
+# spec-example: idd-pr-hitl-modes / append reads only this issue's gate file and never through a symbolic link
+run_state "$T/g1" 41 exhaustive-blocking "not_clean:0:1"
+GA='{"decision": "stop", "merge": false, "mode": "exhaustive-blocking", "reason": "x", "decided": true}'
+GD="$T/g1/.claude/.idd/state"
+printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$T/planted.json"
+ln -sf "$T/planted.json" "$GD/idd-all-gate-41.json"
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+  --gate-file "$GD/idd-all-gate-41.json" 2>&1)
+assert_eq "a gate file that is a symbolic link: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… and append says it cannot be read" "cannot be read" "$OUT"
+rm -f "$GD/idd-all-gate-41.json"
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+  --gate-file "$T/planted.json" 2>&1)
+assert_eq "a gate file outside the state directory: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… and append says it is not this issue's gate file" "is not this issue's gate file" "$OUT"
+printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-42.json"
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+  --gate-file "$GD/idd-all-gate-42.json" 2>&1)
+assert_eq "another issue's gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+mkdir "$GD/idd-all-gate-41.json"
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+  --gate-file "$GD/idd-all-gate-41.json" 2>&1)
+assert_eq "a directory at the gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+rmdir "$GD/idd-all-gate-41.json"
+printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-41.json"
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+  --gate-file "$GD/idd-all-gate-41.json" 2>&1)
+assert_eq "this issue's regular gate file: the record is written" 1 "$(lines "$T/rec-g1.jsonl")"
 
 # A plugin root whose close-stage.py prints a fixed answer when run, and is the real module when imported.
 ROOT="$T/root"; mkdir -p "$ROOT/scripts"

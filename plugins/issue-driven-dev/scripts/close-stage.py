@@ -129,6 +129,38 @@ def result_path(cwd, n):
     return safe_path(os.path.join(state_dir(cwd), f"idd-all-result-{n}.json"))
 
 
+def gate_answer_path(cwd, n):
+    return safe_path(os.path.join(state_dir(cwd), f"idd-all-gate-{n}.json"))
+
+
+def write_gate_answer(cwd, n, result):
+    """#623: the gate's answer for the Phase 4 `next` block, a separate Bash call that cannot keep a variable. It
+    goes through the run state's guards: no symlinked ancestor (state_dir), no symlink at the path (safe_path), and
+    a temporary file made exclusively (mkstemp, mode 0600) moved into place, so a planted link is never written
+    through. A write that fails removes the previous answer when that is a regular file, so the next block cannot
+    read an old one, and only warns: the gate's answer on stdout and its exit code do not change."""
+    try:
+        path = gate_answer_path(cwd, n)
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(path))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(result, ensure_ascii=False) + "\n")
+            os.replace(tmp, path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+    except Exception as exc:
+        try:
+            old = os.path.join(state_dir(cwd), f"idd-all-gate-{n}.json")
+            if os.path.isfile(old) and not os.path.islink(old):
+                os.unlink(old)
+        except Exception:
+            pass
+        print(f"⚠ the gate's answer was not written for the next block ({exc.__class__.__name__}: {exc})",
+              file=sys.stderr)
+
+
 class Replaced(Stop):
     """The run state now belongs to another run (#602 verify r1): Phase 4 stops on it and never counts or fixes."""
 
@@ -373,11 +405,12 @@ def run_identity(cwd, n):
 
 def cmd_gate(argv):
     a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value", "--sha": "value", "--base": "value",
-                     "--read-only": "value"})
+                     "--read-only": "value", "--write-answer": "value"})
     if a is None or not common_ok(a) or not SHA_RE.match(a.get("--sha", "")) \
-            or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes":
-        return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base and "
-                     "--read-only yes")
+            or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes" \
+            or a.get("--write-answer", "yes") != "yes":
+        return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base, "
+                     "--read-only yes and --write-answer yes")
     since = run_id = None
     try:
         ident = run_identity(a["--cwd"], a["--issue"])   # the run this gate reads for; the record is written for it only
@@ -396,6 +429,8 @@ def cmd_gate(argv):
                          f"{exc.__class__.__name__}: {exc}", "comment_id": result.get("comment_id")}
         if isinstance(exc, Replaced):
             result["replaced"] = True     # #602 r1: Phase 4 stops; this is not a write that failed
+    if "--write-answer" in a:             # #623: the Phase 4 gate block, for its next block
+        write_gate_answer(a["--cwd"], a["--issue"], result)
     print(json.dumps(result, ensure_ascii=False))
     return rc
 
