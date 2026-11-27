@@ -784,12 +784,25 @@ st = {"repo": "o/r", "issue": 7, "path": "PR", "requested_path": "PR", "interact
 if rounds:
     for key, env in (("coverage_complete", "LAST_COV"), ("reviewers_complete", "LAST_REVW")):
         v = os.environ.get(env)
+        if v == "none":     # a latest read written by a gate from before #607
+            continue
         st["last_gate"][key] = rounds[-1].get(key) if v is None else v == "true"
 json.dump(st, open(path, "w"))
 EOF
 }
 next_run() { NX=$(python3 "$CS" next --cwd "$C" --repo $REPO --issue $N 2>"$S/err"); RC=$?; }
 nx() { printf '%s' "$NX" | field "$1"; }
+edit_last_report() { # old new — the newest comment, as if its author edited it (body and GitHub's rendering)
+  python3 - "$S/gh/comments.json" "$1" "$2" <<'EOF'
+import json, sys
+path, old, new = sys.argv[1:4]
+cs = json.load(open(path))
+assert old in cs[-1]["body"], old
+for key in ("body", "body_html"):
+    cs[-1][key] = cs[-1][key].replace(old, new)
+json.dump(cs, open(path, "w"))
+EOF
+}
 round_to_fix() { printf '%s' "$NX" | python3 -c 'import json,sys; print(" ".join(str(r["to_fix"]) for r in json.load(sys.stdin)["rounds"]))'; }
 rounds_len() { python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("rounds") or []))' "$C/.claude/.idd/state/idd-all-run-7.json"; }
 gate_run() { G=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")"); RC=$?; }
@@ -842,6 +855,11 @@ assert_eq "no stop mode, coverage incomplete: the round's to-fix count stays 2 (
 COV=true LAST_COV=false write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
 assert_eq "the same report read again with an incomplete coverage line: fix" fix "$(nx decision)"
 assert_grep "… the reason names the coverage line" "coverage line" "$(nx reason)"
+COV=true LAST_COV=none write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
+assert_eq "a latest read that records no coverage line (#607 r2): not complete, fix" fix "$(nx decision)"
+REVW=true LAST_REVW=none write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
+assert_eq "a latest read that records no reviewers line: stop" stop "$(nx decision)"
+assert_eq "… without a merge" False "$(nx merge)"
 COV=none write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
 assert_eq "a round recorded before #607 (no coverage field): counted as incomplete" fix "$(nx decision)"
 
@@ -872,16 +890,28 @@ assert_eq "… without a merge" False "$(nx merge)"
 assert_grep "… because the verify was degraded" "degraded verify" "$(nx reason)"
 pr_scenario stop-gate-reread; init_state PR PR no no unattended exhaustive-blocking
 rm -f "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run
-python3 - "$S/gh/comments.json" <<'EOF'
-import json, sys
-cs = json.load(open(sys.argv[1]))
-for key in ("body", "body_html"):
-    cs[-1][key] = cs[-1][key].replace("1 / 1 requirements addressed", "1 / 2 requirements addressed")
-json.dump(cs, open(sys.argv[1], "w"))
-EOF
-gate_run; next_run
+edit_last_report "1 / 1 requirements addressed" "1 / 2 requirements addressed"; gate_run; next_run
 assert_eq "the same report edited to 1 / 2 and read again: still one round" 1 "$(rounds_len)"
 assert_eq "… and next answers fix, not a merge" fix "$(nx decision)"
+# #607 r2: the other way round — the round recorded incomplete, the latest read complete: the round still counts
+pr_scenario stop-gate-reread-up; init_state PR PR no no unattended exhaustive-blocking
+rm -f "$S/gh/comments.json"; COVER="1 / 2" verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run
+edit_last_report "1 / 2 requirements addressed" "1 / 1 requirements addressed"; gate_run; next_run
+assert_eq "a report edited from 1 / 2 to 1 / 1 and read again: still one round" 1 "$(rounds_len)"
+assert_eq "… and the round's incomplete coverage still counts: fix" fix "$(nx decision)"
+pr_scenario stop-gate-reread-revw-up; init_state PR PR no no unattended exhaustive-blocking
+rm -f "$S/gh/comments.json"; REVIEWERS="4 / 5" verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run
+edit_last_report "4 / 5 reviewers completed" "6 / 6 reviewers completed"; gate_run; next_run
+assert_eq "reviewers edited from 4 / 5 to 6 / 6 and read again: stop" stop "$(nx decision)"
+assert_eq "… without a merge (the round was a degraded verify)" False "$(nx merge)"
+# #607 r2: the gate writes the latest read's reviewers line
+pr_scenario stop-gate-reread-revw-down; init_state PR PR no no unattended exhaustive-blocking
+rm -f "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run
+edit_last_report "6 / 6 reviewers completed" "4 / 5 reviewers completed"; gate_run; next_run
+assert_eq "reviewers edited from 6 / 6 to 4 / 5 and read again: still one round" 1 "$(rounds_len)"
+assert_eq "… stop" stop "$(nx decision)"
+assert_eq "… without a merge" False "$(nx merge)"
+assert_grep "… because the verify was degraded" "degraded verify" "$(nx reason)"
 
 # spec: exhaustive-blocking reaches zero Blocking
 new_scenario stop-exb-zero; write_rounds exhaustive-blocking unattended no "2,0,0;1,0,0;0,3,0"; next_run

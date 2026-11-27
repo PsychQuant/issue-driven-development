@@ -29,8 +29,8 @@ The report's coverage and reviewers lines (#607), recorded in the round by the g
   that a fix does not change: a stop that would merge stops without a merge.
 The gate may read the newest round's report again (the same report, so no new round); a
 line counts as complete only when the round and that latest read both say so (`last_gate`
-carries the two values; one written before this change does not, and then the round's
-count). A run without a stop mode keeps its counts: the gap is added only in the table.
+carries the two values; one written before this change does not, and then the line counts
+as incomplete). A run without a stop mode keeps its counts: the gap is added only in the table.
 
 Two rules hold in every run (verify round 1 of #595):
 - a gate result that `next` already answered with fix (same commit, same report or no
@@ -70,13 +70,14 @@ COMPLETENESS = ("coverage_complete", "reviewers_complete")
 def effective_rounds(st):
     """The round record, with the newest round's coverage and reviewers lines complete only when the round and the
     latest gate read of its report both say so (#607 r1: the gate may read the same report again, which adds no
-    round). A latest read written before #607 carries neither value; then the round's own value counts."""
+    round). A latest read without the value (written by a gate from before #607) does not confirm it, so the line
+    counts as incomplete, as the close stage reads it (#607 r2)."""
     rounds = list(st.get("rounds") or [])
     last = st.get("last_gate") or {}
     if rounds and last.get("report_id") == rounds[-1].get("report_id"):
         cur = dict(rounds[-1])
         for field in COMPLETENESS:
-            cur[field] = cur.get(field) is True and last.get(field, True) is True
+            cur[field] = cur.get(field) is True and last.get(field) is True
         rounds[-1] = cur
     return rounds
 
