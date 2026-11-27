@@ -75,6 +75,7 @@ import math
 import os
 import re
 import secrets
+import stat
 import sys
 import tempfile
 import time
@@ -133,53 +134,113 @@ def gate_answer_path(cwd, n):
     return safe_path(os.path.join(state_dir(cwd), f"idd-all-gate-{n}.json"))
 
 
-def write_gate_answer(cwd, n, result):
-    """#623: the gate's answer for the Phase 4 `next` block, a separate Bash call that cannot keep a variable. It
-    goes through the run state's guards: no symlinked ancestor (state_dir), no symlink at the path (safe_path), and
-    a temporary file made exclusively (mkstemp, mode 0600) moved into place, so a planted link is never written
-    through. A write that fails removes the previous answer when that is a regular file, or empties it when it
-    cannot be removed (a directory that became read-only still lets the file be written, #623 r1), so the next block
-    cannot read an old one, and only warns: the gate's answer on stdout and its exit code do not change. When neither
-    works the warning says the previous answer is still there."""
+def open_state_dir(cwd):
+    """#623 r2: the state directory as an open descriptor, each component of its path opened without following a
+    symbolic link, so what is done relative to it cannot be sent elsewhere by a link put in after the check."""
+    path = state_dir(cwd)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(os.sep, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
-        path = gate_answer_path(cwd, n)
-        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(path))
+        for part in path.split(os.sep):
+            if part:
+                below = os.open(part, flags, dir_fd=fd)
+                os.close(fd)
+                fd = below
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+@contextlib.contextmanager
+def inside(dfd):
+    """Work with the open directory `dfd` as the current directory, so relative names stay in it (os.replace takes
+    no dir_fd on every platform, #623 r2); the previous directory is restored afterwards."""
+    back = os.open(".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fchdir(dfd)
+        yield
+    finally:
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(result, ensure_ascii=False) + "\n")
-            os.replace(tmp, path)
-        except BaseException:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-            raise
-    except Exception as exc:
-        left = clear_old_gate_answer(cwd, n)
+            os.fchdir(back)
+        finally:
+            os.close(back)
+
+
+def write_gate_answer(cwd, n, result):
+    """#623: the gate's answer for the Phase 4 `next` block, a separate Bash call that cannot keep a variable. It is
+    written inside the state directory opened without following a link (open_state_dir): a symbolic link at the
+    name is refused, a temporary file made exclusively (mkstemp, mode 0600) is moved into place, and every step is
+    relative to that directory. A write that fails removes the previous answer when that is a regular file, or
+    empties it when it cannot be removed, so the next block cannot read an old one (clear_old_gate_answer), and only
+    warns: the gate's answer on stdout and its exit code do not change. When the previous answer may still be there,
+    the warning says so."""
+    name = f"idd-all-gate-{n}.json"
+
+    def warn(exc, left=None):
         print(f"⚠ the gate's answer was not written for the next block ({exc.__class__.__name__}: {exc})"
-              + (f"; the previous answer is still there and the next block may read it ({left})" if left else ""),
+              + (f"; the previous answer may still be there and the next block may read it ({left})" if left else ""),
               file=sys.stderr)
 
-
-def clear_old_gate_answer(cwd, n):
-    """After a failed write: remove the previous answer, or else empty it, so append reads none (#623 r1). Returns
-    None when nothing old is left to read, else why it is still there. A link or anything but a regular file at the
-    path is left alone: append does not read those."""
     try:
-        old = os.path.join(state_dir(cwd), f"idd-all-gate-{n}.json")
-        if not os.path.isfile(old) or os.path.islink(old):
-            return None
+        dfd = open_state_dir(cwd)
     except Exception as exc:
-        return f"{exc.__class__.__name__}: {exc}"
+        warn(exc)               # append opens the directory the same way and reads nothing through it either
+        return
     try:
-        os.unlink(old)
+        with inside(dfd):
+            try:
+                if os.path.islink(name):
+                    raise Stop(f"{name} is a symlink — refusing to use it")
+                fd, tmp = tempfile.mkstemp(prefix=name + ".", suffix=".tmp", dir=".")
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        fh.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    os.replace(tmp, name)
+                except BaseException:
+                    if os.path.lexists(tmp):
+                        os.unlink(tmp)
+                    raise
+            except Exception as exc:
+                warn(exc, clear_old_gate_answer(name))
+    except Exception as exc:    # the directory could not be entered or left
+        warn(exc)
+    finally:
+        os.close(dfd)
+
+
+def clear_old_gate_answer(name):
+    """After a failed write, inside the state directory: remove the previous answer, or else empty it, so append
+    reads none (#623 r1). Returns None when nothing old is left to read, else why it may still be there. A link or
+    anything but a regular file at the name is left alone: append does not read those. Emptying opens the file
+    first and checks the open file, a regular file with one link (#623 r2: a hard link would empty another path)."""
+    try:
+        st = os.lstat(name)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:      # #623 r2: a state that cannot be read is not "no old answer"
+        return f"its state cannot be read: {exc.strerror or exc}"
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    try:
+        os.unlink(name)
         return None
     except OSError as exc:
-        removing = exc
+        removing = f"not removed: {exc.strerror or exc}"
     try:
-        fd = os.open(old, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        fd = os.open(name, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError as exc:
+        return f"{removing}; not emptied: {exc.strerror or exc}"
+    try:
+        got = os.fstat(fd)
+        if not stat.S_ISREG(got.st_mode) or got.st_nlink != 1:
+            return f"{removing}; not emptied: it is not a regular file with one link"
+        os.ftruncate(fd, 0)
+        return None
+    except OSError as exc:
+        return f"{removing}; not emptied: {exc.strerror or exc}"
+    finally:
         os.close(fd)
-        return None
-    except OSError as exc:
-        return f"not removed: {removing.strerror or removing}; not emptied: {exc.strerror or exc}"
 
 
 class Replaced(Stop):

@@ -84,7 +84,7 @@ def gate_answer(a):
             # #623 r1: open the checked name in the checked directory, not the argument again (after a linked
             # component, `..` leads somewhere else than the string says); without blocking, so a FIFO there cannot
             # hold the open before its type is checked
-            dfd = os.open(here, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            dfd = close_stage().open_state_dir(a["--cwd"])     # r2: no link anywhere on the way to it
             try:
                 fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
                              dir_fd=dfd)

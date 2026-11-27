@@ -865,6 +865,15 @@ gate_write() { G=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "
 gate_write
 assert_eq "gate --write-answer: the file holds the gate's answer" "$G" "$(cat "$GF")"
 assert_eq "… readable by the owner only" 600 "$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$GF")"
+# #623 r2: the state directory itself a symbolic link: nothing is written through it, and stdout does not change
+rm -f "$GF"; mv "$C/.claude/.idd/state" "$S/real-state"; ln -s "$S/real-state" "$C/.claude/.idd/state"
+gate_run; GL0=$G; RCL0=$RC
+gate_write
+assert_eq "a linked state directory: the gate answers as without the flag" "$GL0" "$G"
+assert_eq "… with the same exit code" "$RCL0" "$RC"
+assert_eq "… writes no gate file through the link" no "$([ -e "$S/real-state/idd-all-gate-7.json" ] && echo yes || echo no)"
+assert_grep "… and warns" "answer was not written" "$(cat "$S/gerr")"
+rm "$C/.claude/.idd/state"; mv "$S/real-state" "$C/.claude/.idd/state"
 rm -f "$GF"; echo original > "$S/elsewhere"; ln -s "$S/elsewhere" "$GF"
 gate_write
 assert_eq "a symlink at the gate file: what it points to is unchanged" original "$(cat "$S/elsewhere")"
@@ -886,12 +895,16 @@ def refuse(src, dst, *a, **k):
         raise OSError(28, "disk full")
     return real_replace(src, dst, *a, **k)
 os.replace = refuse
-if how == "no-unlink":
+if how in ("no-unlink", "neither"):
     def no_unlink(path, *a, **k):
         if gate_file(path):
             raise PermissionError(13, "read-only directory")
         return real_unlink(path, *a, **k)
     os.unlink = no_unlink
+if how == "neither":
+    def no_truncate(*a, **k):
+        raise OSError(30, "read-only file system")
+    os.ftruncate = no_truncate
 out, err = io.StringIO(), io.StringIO()
 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     rc = cs.cmd_gate(["--cwd", cwd, "--repo", repo, "--issue", n, "--sha", sha, "--base", base, "--write-answer", "yes"])
@@ -909,6 +922,18 @@ G=$(gate_failing no-unlink 2>"$S/gerr"); RC=$?
 assert_eq "a failed write that cannot remove the previous answer: same stdout" "$G0" "$G"
 assert_eq "… same exit code" "$RC0" "$RC"
 assert_eq "… and the previous answer is emptied, so append reads none" 0 "$(wc -c < "$GF" | tr -d ' ')"
+assert_grep "… it warns that the answer was not written" "answer was not written" "$(cat "$S/gerr")"
+assert_eq "… and not that the previous one is still there" 0 "$(grep -c 'may still be there' "$S/gerr")"
+printf '{"old": true}\n' > "$GF"
+G=$(gate_failing neither 2>"$S/gerr"); RC=$?
+assert_eq "neither removed nor emptied: same stdout" "$G0" "$G"
+assert_eq "… same exit code" "$RC0" "$RC"
+assert_grep "… and the warning says the previous answer may still be there" "may still be there" "$(cat "$S/gerr")"
+rm -f "$GF" "$S/twin"; printf '{"old": true}\n' > "$GF"; ln "$GF" "$S/twin"
+G=$(gate_failing no-unlink 2>"$S/gerr"); RC=$?
+assert_eq "a hard-linked previous answer is not emptied: the other path keeps its content" '{"old": true}' "$(cat "$S/twin")"
+assert_grep "… and the warning says it may still be there" "may still be there" "$(cat "$S/gerr")"
+rm -f "$GF" "$S/twin"
 assert_eq "… and leaves no temporary file" 0 "$(ls "$C/.claude/.idd/state" | grep -c '^idd-all-gate-7.json\..*\.tmp$')"
 
 # spec: the same report read twice is one round
