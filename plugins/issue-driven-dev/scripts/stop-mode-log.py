@@ -76,14 +76,24 @@ def gate_answer(a):
             here = close_stage().state_dir(a["--cwd"])
         except Exception as exc:
             return None, f"the state directory cannot be used ({exc.__class__.__name__})"
+        name = f"idd-all-gate-{a['--issue']}.json"
         if os.path.realpath(os.path.dirname(os.path.abspath(a["--gate-file"]))) != here \
-                or os.path.basename(a["--gate-file"]) != f"idd-all-gate-{a['--issue']}.json":
+                or os.path.basename(a["--gate-file"]) != name:
             return None, f"the gate's answer file {shown} is not this issue's gate file in {json.dumps(here)}"
         try:
-            fd = os.open(a["--gate-file"], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            # #623 r1: open the checked name in the checked directory, not the argument again (after a linked
+            # component, `..` leads somewhere else than the string says); without blocking, so a FIFO there cannot
+            # hold the open before its type is checked
+            dfd = os.open(here, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+                             dir_fd=dfd)
+            finally:
+                os.close(dfd)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):      # before fdopen, which refuses a directory itself
+                os.close(fd)
+                return None, f"the gate's answer file {shown} is not a regular file"
             with os.fdopen(fd, encoding="utf-8") as fh:
-                if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-                    return None, f"the gate's answer file {shown} is not a regular file"
                 text = fh.read()
         except (OSError, ValueError):
             return None, f"the gate's answer file {shown} cannot be read"

@@ -137,8 +137,10 @@ def write_gate_answer(cwd, n, result):
     """#623: the gate's answer for the Phase 4 `next` block, a separate Bash call that cannot keep a variable. It
     goes through the run state's guards: no symlinked ancestor (state_dir), no symlink at the path (safe_path), and
     a temporary file made exclusively (mkstemp, mode 0600) moved into place, so a planted link is never written
-    through. A write that fails removes the previous answer when that is a regular file, so the next block cannot
-    read an old one, and only warns: the gate's answer on stdout and its exit code do not change."""
+    through. A write that fails removes the previous answer when that is a regular file, or empties it when it
+    cannot be removed (a directory that became read-only still lets the file be written, #623 r1), so the next block
+    cannot read an old one, and only warns: the gate's answer on stdout and its exit code do not change. When neither
+    works the warning says the previous answer is still there."""
     try:
         path = gate_answer_path(cwd, n)
         fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(path))
@@ -151,14 +153,33 @@ def write_gate_answer(cwd, n, result):
                 os.unlink(tmp)
             raise
     except Exception as exc:
-        try:
-            old = os.path.join(state_dir(cwd), f"idd-all-gate-{n}.json")
-            if os.path.isfile(old) and not os.path.islink(old):
-                os.unlink(old)
-        except Exception:
-            pass
-        print(f"⚠ the gate's answer was not written for the next block ({exc.__class__.__name__}: {exc})",
+        left = clear_old_gate_answer(cwd, n)
+        print(f"⚠ the gate's answer was not written for the next block ({exc.__class__.__name__}: {exc})"
+              + (f"; the previous answer is still there and the next block may read it ({left})" if left else ""),
               file=sys.stderr)
+
+
+def clear_old_gate_answer(cwd, n):
+    """After a failed write: remove the previous answer, or else empty it, so append reads none (#623 r1). Returns
+    None when nothing old is left to read, else why it is still there. A link or anything but a regular file at the
+    path is left alone: append does not read those."""
+    try:
+        old = os.path.join(state_dir(cwd), f"idd-all-gate-{n}.json")
+        if not os.path.isfile(old) or os.path.islink(old):
+            return None
+    except Exception as exc:
+        return f"{exc.__class__.__name__}: {exc}"
+    try:
+        os.unlink(old)
+        return None
+    except OSError as exc:
+        removing = exc
+    try:
+        fd = os.open(old, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        os.close(fd)
+        return None
+    except OSError as exc:
+        return f"not removed: {removing.strerror or removing}; not emptied: {exc.strerror or exc}"
 
 
 class Replaced(Stop):

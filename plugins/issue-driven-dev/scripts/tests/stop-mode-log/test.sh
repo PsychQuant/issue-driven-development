@@ -212,19 +212,45 @@ OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo 
 assert_eq "a gate file that is a symbolic link: no record" 0 "$(lines "$T/rec-g1.jsonl")"
 assert_grep "… and append says it cannot be read" "cannot be read" "$OUT"
 rm -f "$GD/idd-all-gate-41.json"
+mkdir -p "$T/elsewhere"; cp "$T/planted.json" "$T/elsewhere/idd-all-gate-41.json"     # #623 r1: the same name
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
-  --gate-file "$T/planted.json" 2>&1)
-assert_eq "a gate file outside the state directory: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+  --gate-file "$T/elsewhere/idd-all-gate-41.json" 2>&1)
+assert_eq "this issue's file name outside the state directory: no record" 0 "$(lines "$T/rec-g1.jsonl")"
 assert_grep "… and append says it is not this issue's gate file" "is not this issue's gate file" "$OUT"
+mkdir -p "$T/far/inner"; cp "$T/planted.json" "$T/far/idd-all-gate-41.json"; ln -s "$T/far/inner" "$GD/hop"
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+  --gate-file "$GD/hop/../idd-all-gate-41.json" 2>&1)
+assert_eq "a path whose .. after a link leads out of the state directory: the planted file is not read" 0 \
+  "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… append reads the state directory's own file, which is not there" "cannot be read" "$OUT"
+rm -f "$GD/hop"
 printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-42.json"
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
   --gate-file "$GD/idd-all-gate-42.json" 2>&1)
 assert_eq "another issue's gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… and append says it is not this issue's gate file" "is not this issue's gate file" "$OUT"
 mkdir "$GD/idd-all-gate-41.json"
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
   --gate-file "$GD/idd-all-gate-41.json" 2>&1)
 assert_eq "a directory at the gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… and append says it is not a regular file" "is not a regular file" "$OUT"
 rmdir "$GD/idd-all-gate-41.json"
+mkfifo "$GD/idd-all-gate-41.json"
+# #623 r1: a FIFO with no writer must not hold the open; run under a time limit so a regression fails, not hangs
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 - "$LOG" "$T/g1" "$REPO" "$GA" "$GD/idd-all-gate-41.json" <<'EOF'
+import subprocess, sys
+log, cwd, repo, answer, path = sys.argv[1:]
+try:
+    r = subprocess.run([sys.executable, log, "append", "--cwd", cwd, "--repo", repo, "--issue", "41", "--answer",
+                        answer, "--gate-file", path], capture_output=True, text=True, timeout=20)
+    print(f"rc={r.returncode} {r.stderr}")
+except subprocess.TimeoutExpired:
+    print("timed out")
+EOF
+)
+assert_eq "a FIFO at the gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… append does not wait on it and says it is not a regular file" "is not a regular file" "$OUT"
+rm -f "$GD/idd-all-gate-41.json"
 printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-41.json"
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
   --gate-file "$GD/idd-all-gate-41.json" 2>&1)
