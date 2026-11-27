@@ -904,6 +904,16 @@ rm -f "$S/gh/comments.json"; REVIEWERS="4 / 5" verify_comment me "$SHA" "$(base_
 edit_last_report "4 / 5 reviewers completed" "6 / 6 reviewers completed"; gate_run; next_run
 assert_eq "reviewers edited from 4 / 5 to 6 / 6 and read again: stop" stop "$(nx decision)"
 assert_eq "… without a merge (the round was a degraded verify)" False "$(nx merge)"
+# #607 r3: a line found incomplete on a re-read stays incomplete in that round, also once the next round is recorded
+pr_scenario stop-gate-reread-later; init_state PR PR no no unattended early
+rm -f "$S/gh/comments.json"; SEV=MEDIUM verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a"; gate_run
+edit_last_report "1 / 1 requirements addressed" "1 / 2 requirements addressed"; gate_run; next_run
+assert_eq "early round 1 read again with 1 / 2: fix" fix "$(nx decision)"
+assert_eq "… its to-fix count is 2" 2 "$(nx to_fix)"
+assert_eq "… and the round record keeps the line incomplete" False "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rounds"][0].get("coverage_complete"))' "$C/.claude/.idd/state/idd-all-run-7.json")"
+SEV=MEDIUM verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a" "## Verify: #7 — round 2"; gate_run; next_run
+assert_eq "round 2 complete with the same MEDIUM: the count fell (2 → 1), fix" fix "$(nx decision)"
+assert_eq "… each round's to-fix count" "2 1" "$(round_to_fix)"
 # #607 r2: the gate writes the latest read's reviewers line
 pr_scenario stop-gate-reread-revw-down; init_state PR PR no no unattended exhaustive-blocking
 rm -f "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run

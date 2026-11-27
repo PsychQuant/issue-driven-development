@@ -469,7 +469,7 @@ def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
     rid = result.get("comment_id")
     rounds, attempts = list(st.get("rounds") or []), list(st.get("attempts") or [])
     at = iso(now())
-    judged = result.get("status") != "unparseable"
+    judged = judged_now = result.get("status") != "unparseable"
     # #607 r1: the latest read carries the two lines too, so next sees a report read again with a line now incomplete
     st["last_gate"] = {"status": result.get("status"), "report_id": rid, "sha": sha, "reason": result.get("reason"),
                        "coverage_complete": result.get("coverage_complete") if judged else None,
@@ -493,6 +493,13 @@ def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
                        "reviewers_complete": result.get("reviewers_complete") if judged else None,
                        "report_id": rid, "at": at})
         seen.append(rid)
+    elif rid is not None:
+        # #607 r3: the same report read again adds no round, but a line it now finds incomplete stays incomplete in
+        # that round's record (complete only while every read of the report says so), so later rounds compare against
+        # it; the round's counts are not changed
+        k = seen.index(rid)
+        rounds[k] = dict(rounds[k], **{field: rounds[k].get(field) is True and (judged_now and result.get(field) is True)
+                                       for field in ("coverage_complete", "reviewers_complete")})
     st["rounds"], st["attempts"] = rounds, attempts
     if rid is not None:
         result["round"] = seen.index(rid) + 1
