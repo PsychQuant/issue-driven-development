@@ -873,6 +873,7 @@ assert_eq "a linked state directory: the gate answers as without the flag" "$GL0
 assert_eq "… with the same exit code" "$RCL0" "$RC"
 assert_eq "… writes no gate file through the link" no "$([ -e "$S/real-state/idd-all-gate-7.json" ] && echo yes || echo no)"
 assert_grep "… and warns" "answer was not written" "$(cat "$S/gerr")"
+assert_grep "… that the previous answer may still be there" "may still be there" "$(cat "$S/gerr")"      # #623 r3
 rm "$C/.claude/.idd/state"; mv "$S/real-state" "$C/.claude/.idd/state"
 rm -f "$GF"; echo original > "$S/elsewhere"; ln -s "$S/elsewhere" "$GF"
 gate_write
@@ -931,7 +932,9 @@ assert_eq "… same exit code" "$RC0" "$RC"
 assert_grep "… and the warning says the previous answer may still be there" "may still be there" "$(cat "$S/gerr")"
 rm -f "$GF" "$S/twin"; printf '{"old": true}\n' > "$GF"; ln "$GF" "$S/twin"
 G=$(gate_failing no-unlink 2>"$S/gerr"); RC=$?
-assert_eq "a hard-linked previous answer is not emptied: the other path keeps its content" '{"old": true}' "$(cat "$S/twin")"
+assert_eq "a hard-linked previous answer: same stdout" "$G0" "$G"           # #623 r3
+assert_eq "… same exit code" "$RC0" "$RC"
+assert_eq "… not emptied: the other path keeps its content" '{"old": true}' "$(cat "$S/twin")"
 assert_grep "… and the warning says it may still be there" "may still be there" "$(cat "$S/gerr")"
 rm -f "$GF" "$S/twin"
 assert_eq "… and leaves no temporary file" 0 "$(ls "$C/.claude/.idd/state" | grep -c '^idd-all-gate-7.json\..*\.tmp$')"

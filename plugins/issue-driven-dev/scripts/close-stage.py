@@ -156,22 +156,28 @@ def open_state_dir(cwd):
 def inside(dfd):
     """Work with the open directory `dfd` as the current directory, so relative names stay in it (os.replace takes
     no dir_fd on every platform, #623 r2); the previous directory is restored afterwards."""
-    back = os.open(".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        back = os.open(".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:             # #623 r3: a directory that can be searched but not read is returned to by its path
+        back = os.getcwd()
     try:
         os.fchdir(dfd)
         yield
     finally:
-        try:
-            os.fchdir(back)
-        finally:
-            os.close(back)
+        if isinstance(back, int):
+            try:
+                os.fchdir(back)
+            finally:
+                os.close(back)
+        else:
+            os.chdir(back)
 
 
 def write_gate_answer(cwd, n, result):
     """#623: the gate's answer for the Phase 4 `next` block, a separate Bash call that cannot keep a variable. It is
     written inside the state directory opened without following a link (open_state_dir): a symbolic link at the
-    name is refused, a temporary file made exclusively (mkstemp, mode 0600) is moved into place, and every step is
-    relative to that directory. A write that fails removes the previous answer when that is a regular file, or
+    name is refused, a temporary file made exclusively by a relative name (mode 0600) is moved into place, and
+    every step is relative to that directory. A write that fails removes the previous answer when that is a regular file, or
     empties it when it cannot be removed, so the next block cannot read an old one (clear_old_gate_answer), and only
     warns: the gate's answer on stdout and its exit code do not change. When the previous answer may still be there,
     the warning says so."""
@@ -182,17 +188,20 @@ def write_gate_answer(cwd, n, result):
               + (f"; the previous answer may still be there and the next block may read it ({left})" if left else ""),
               file=sys.stderr)
 
+    unchecked = "the state directory could not be used, so no previous answer was removed"     # #623 r3
     try:
         dfd = open_state_dir(cwd)
     except Exception as exc:
-        warn(exc)               # append opens the directory the same way and reads nothing through it either
+        warn(exc, unchecked)
         return
     try:
         with inside(dfd):
             try:
                 if os.path.islink(name):
                     raise Stop(f"{name} is a symlink — refusing to use it")
-                fd, tmp = tempfile.mkstemp(prefix=name + ".", suffix=".tmp", dir=".")
+                # a relative name made exclusively, never a path resolved again (#623 r3: mkstemp makes `.` absolute)
+                tmp = f"{name}.{secrets.token_hex(8)}.tmp"
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as fh:
                         fh.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -204,7 +213,7 @@ def write_gate_answer(cwd, n, result):
             except Exception as exc:
                 warn(exc, clear_old_gate_answer(name))
     except Exception as exc:    # the directory could not be entered or left
-        warn(exc)
+        warn(exc, unchecked)
     finally:
         os.close(dfd)
 

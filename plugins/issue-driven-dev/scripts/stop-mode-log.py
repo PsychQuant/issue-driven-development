@@ -77,7 +77,8 @@ def gate_answer(a):
         except Exception as exc:
             return None, f"the state directory cannot be used ({exc.__class__.__name__})"
         name = f"idd-all-gate-{a['--issue']}.json"
-        if os.path.realpath(os.path.dirname(os.path.abspath(a["--gate-file"]))) != here \
+        # #623 r3: the directory part resolved with every link in it followed, `..` after a link included
+        if os.path.realpath(os.path.dirname(a["--gate-file"]) or ".") != here \
                 or os.path.basename(a["--gate-file"]) != name:
             return None, f"the gate's answer file {shown} is not this issue's gate file in {json.dumps(here)}"
         try:
