@@ -881,6 +881,24 @@ assert_eq "a symlink at the gate file: what it points to is unchanged" original 
 assert_grep "… the gate warns" "answer was not written" "$(cat "$S/gerr")"
 assert_eq "… and answers on stdout exactly as without the flag" "$G0" "$G"
 assert_eq "… with the same exit code" "$RC0" "$RC"
+# #623 r4: refused arguments write no answer, but leave no previous one to be read; stdout as without the flag
+rm -f "$GF"; printf '{"old": true}\n' > "$GF"
+GB0=$(python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "" 2>/dev/null); RCB0=$?
+assert_eq "refused arguments without the flag leave the previous answer alone" yes "$([ -e "$GF" ] && echo yes || echo no)"
+GB=$(python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "" --write-answer yes 2>/dev/null); RCB=$?
+assert_eq "refused arguments with the flag: same stdout" "$GB0" "$GB"
+assert_eq "… same exit code" "$RCB0" "$RCB"
+assert_eq "… and the previous answer is gone" no "$([ -e "$GF" ] && echo yes || echo no)"
+# #623 r4: 0600 whatever the umask, also one that takes the owner's read away
+rm -f "$GF"; ( umask 477; IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" --write-answer yes >/dev/null 2>&1 )
+assert_eq "under umask 477 the gate file is still 600" 600 "$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$GF")"
+python3 - "$C/.claude/.idd/state" <<'EOF'
+import os, sys            # give back the owner's bits other files lost under that umask
+for f in os.listdir(sys.argv[1]):
+    p = os.path.join(sys.argv[1], f)
+    if os.path.isfile(p) and not os.path.islink(p):
+        os.chmod(p, 0o600)
+EOF
 # Through the gate command itself (#623 r1): os.replace fails, then also os.unlink of the old answer
 gate_failing() {
   IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 - "$CS" "$1" "$C" $REPO $N "$SHA" "$(base_of "$SHA")" <<'EOF'

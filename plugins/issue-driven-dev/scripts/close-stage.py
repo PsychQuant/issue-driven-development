@@ -203,6 +203,7 @@ def write_gate_answer(cwd, n, result):
                 tmp = f"{name}.{secrets.token_hex(8)}.tmp"
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 try:
+                    os.fchmod(fd, 0o600)    # #623 r4: the umask must not take the owner's read away
                     with os.fdopen(fd, "w", encoding="utf-8") as fh:
                         fh.write(json.dumps(result, ensure_ascii=False) + "\n")
                     os.replace(tmp, name)
@@ -214,6 +215,26 @@ def write_gate_answer(cwd, n, result):
                 warn(exc, clear_old_gate_answer(name))
     except Exception as exc:    # the directory could not be entered or left
         warn(exc, unchecked)
+    finally:
+        os.close(dfd)
+
+
+def invalidate_gate_answer(cwd, n):
+    """#623 r4: when the gate writes no answer (its arguments were refused), the previous one is removed or emptied
+    as after a failed write, so the next block cannot take it for this round's; a warning says when it may remain."""
+    name = f"idd-all-gate-{n}.json"
+    try:
+        dfd = open_state_dir(cwd)
+    except Exception as exc:
+        print(f"⚠ the previous gate answer may still be there ({exc.__class__.__name__}: {exc})", file=sys.stderr)
+        return
+    try:
+        with inside(dfd):
+            left = clear_old_gate_answer(name)
+        if left:
+            print(f"⚠ the previous gate answer may still be there ({left})", file=sys.stderr)
+    except Exception as exc:
+        print(f"⚠ the previous gate answer may still be there ({exc.__class__.__name__}: {exc})", file=sys.stderr)
     finally:
         os.close(dfd)
 
@@ -500,6 +521,16 @@ def cmd_gate(argv):
     if a is None or not common_ok(a) or not SHA_RE.match(a.get("--sha", "")) \
             or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes" \
             or a.get("--write-answer", "yes") != "yes":
+        # #623 r4: refused arguments write no answer, but the previous round's must not be read as this one's. An
+        # empty value makes parse() refuse the whole line, so the three flags this needs are read on their own.
+        seen = {}
+        for i, flag in enumerate(argv[:-1]):
+            if flag in ("--cwd", "--issue", "--write-answer"):
+                seen.setdefault(flag, []).append(argv[i + 1])
+        one = {k: v[0] for k, v in seen.items() if len(v) == 1}
+        if one.get("--write-answer") == "yes" and one.get("--cwd") and os.path.isdir(one["--cwd"]) \
+                and re.match(r"^[0-9]+$", one.get("--issue", "")):
+            invalidate_gate_answer(one["--cwd"], one["--issue"])
         return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base, "
                      "--read-only yes and --write-answer yes")
     since = run_id = None

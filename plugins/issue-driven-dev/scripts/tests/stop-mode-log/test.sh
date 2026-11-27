@@ -223,7 +223,13 @@ OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo 
   --gate-file "$GD/hop/../idd-all-gate-41.json" 2>&1)
 assert_eq "a path whose .. after a link leads out of the state directory: no record" 0 "$(lines "$T/rec-g1.jsonl")"
 assert_grep "… append says it is not this issue's gate file" "is not this issue's gate file" "$OUT"
-rm -f "$GD/hop" "$GD/idd-all-gate-41.json"
+rm -f "$GD/hop"
+# #623 r4: a directory part the system cannot resolve (`missing/..`), with the valid answer still there
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+  --gate-file "$GD/missing/../idd-all-gate-41.json" 2>&1)
+assert_eq "a path through a missing directory: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… and append says it cannot be read" "cannot be read" "$OUT"
+rm -f "$GD/idd-all-gate-41.json"
 printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-42.json"
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
   --gate-file "$GD/idd-all-gate-42.json" 2>&1)
