@@ -27,6 +27,10 @@ The report's coverage and reviewers lines (#607), recorded in the round by the g
   it. A round recorded before #607 has no field and counts as incomplete, as there;
 - an incomplete reviewers line (`R / T reviewers completed`, R < T) is a degraded verify
   that a fix does not change: a stop that would merge stops without a merge.
+The gate may read the newest round's report again (the same report, so no new round); a
+line counts as complete only when the round and that latest read both say so (`last_gate`
+carries the two values; one written before this change does not, and then the round's
+count). A run without a stop mode keeps its counts: the gap is added only in the table.
 
 Two rules hold in every run (verify round 1 of #595):
 - a gate result that `next` already answered with fix (same commit, same report or no
@@ -51,21 +55,41 @@ def blocking(r):
     return r["blocking"] + coverage_gap(r)
 
 
-def to_fix(r, blocking_only):
+def to_fix(r, blocking_only, gap=True):
+    """Blocking plus the In-scope fix findings above LOW; `gap` adds an incomplete coverage line as one Blocking
+    finding, which only the stop modes do (#607 r1: a run without a stop mode keeps its counts)."""
+    b = blocking(r) if gap else r["blocking"]
     if blocking_only:
-        return blocking(r)
-    return blocking(r) + r["in_scope"] - (r.get("low_in_scope") or 0)
+        return b
+    return b + r["in_scope"] - (r.get("low_in_scope") or 0)
 
 
-def _brief(r, blocking_only=False):
+COMPLETENESS = ("coverage_complete", "reviewers_complete")
+
+
+def effective_rounds(st):
+    """The round record, with the newest round's coverage and reviewers lines complete only when the round and the
+    latest gate read of its report both say so (#607 r1: the gate may read the same report again, which adds no
+    round). A latest read written before #607 carries neither value; then the round's own value counts."""
+    rounds = list(st.get("rounds") or [])
+    last = st.get("last_gate") or {}
+    if rounds and last.get("report_id") == rounds[-1].get("report_id"):
+        cur = dict(rounds[-1])
+        for field in COMPLETENESS:
+            cur[field] = cur.get(field) is True and last.get(field, True) is True
+        rounds[-1] = cur
+    return rounds
+
+
+def _brief(r, blocking_only=False, gap=True):
     out = {k: r.get(k) for k in ("round", "sha", "status", "blocking", "in_scope", "low_in_scope", "report_id")}
-    out["to_fix"] = to_fix(r, blocking_only) if _counted(r) else None     # Phase 6 lists it per round
+    out["to_fix"] = to_fix(r, blocking_only, gap) if _counted(r) else None     # Phase 6 lists it per round
     return out
 
 
 def _answer(decision, merge, reason, mode, rounds, blocking_only=False, **extra):
     return dict({"decision": decision, "merge": merge, "reason": reason, "mode": mode,
-                 "rounds": [_brief(r, blocking_only) for r in rounds]}, **extra)
+                 "rounds": [_brief(r, blocking_only, gap=mode is not None) for r in rounds]}, **extra)
 
 
 def _counted(r):
@@ -119,7 +143,7 @@ def decide(st):
     if answered_fix(st) and (ans["decision"] == "fix" or ans["merge"]):
         return dict(ans, decision="stop", merge=False,
                     reason=f"no new report or commit followed the fix answer for this result ({ans['reason']})")
-    rounds = st.get("rounds") or []
+    rounds = effective_rounds(st)
     # A degraded verify (#607): fixing the code does not complete the reviewers line, so the stop does not merge.
     if ans["merge"] and ans.get("mode") is not None and rounds and rounds[-1].get("reviewers_complete") is not True:
         return dict(ans, merge=False, reason=f"{ans['reason']}; the report's reviewers line is incomplete (a degraded "
@@ -135,7 +159,7 @@ def _decide(st):
     mode = st.get("verify_stop")
     if mode is None:
         return _no_mode(st)
-    rounds = st.get("rounds") or []
+    rounds = effective_rounds(st)
     last = st.get("last_gate") or {}
     never_merges = bool(st.get("review") or st.get("in_chain"))
     if not rounds:

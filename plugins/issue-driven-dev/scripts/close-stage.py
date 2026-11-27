@@ -469,8 +469,11 @@ def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
     rid = result.get("comment_id")
     rounds, attempts = list(st.get("rounds") or []), list(st.get("attempts") or [])
     at = iso(now())
+    judged = result.get("status") != "unparseable"
+    # #607 r1: the latest read carries the two lines too, so next sees a report read again with a line now incomplete
     st["last_gate"] = {"status": result.get("status"), "report_id": rid, "sha": sha, "reason": result.get("reason"),
-                       "at": at}
+                       "coverage_complete": result.get("coverage_complete") if judged else None,
+                       "reviewers_complete": result.get("reviewers_complete") if judged else None, "at": at}
     seen = [r.get("report_id") for r in rounds]
     # An attempt is a verify round: a new commit, or on the same commit a report id (or no report id: the round's
     # report is missing or could not be fetched, verify r2 #2) not read on it before. A fix pass that made no
@@ -479,7 +482,6 @@ def _record_round_locked(cwd, repo, n, result, sha, since, run_id):
     if not attempts or attempts[-1].get("sha") != sha or rid not in on_sha:
         attempts.append({"sha": sha, "report_id": rid, "at": at})
     if rid is not None and rid not in seen:
-        judged = result.get("status") != "unparseable"
         rounds.append({"round": len(rounds) + 1, "sha": sha, "status": result.get("status"),
                        "blocking": result.get("blocking") if judged else None,
                        "in_scope": result.get("in_scope") if judged else None,

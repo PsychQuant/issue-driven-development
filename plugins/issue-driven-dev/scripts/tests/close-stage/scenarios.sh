@@ -86,6 +86,7 @@ json.dump(cs, open(path, "w"))
 EOF
 }
 PASS_LINE="**PASS** — 0 blocking, 0 follow-up"
+LEFT="**FAIL** — 0 blocking, 1 in-scope fix"   # #607: a PASS with an incomplete coverage line is unparseable to the gate
 base_of() { git -C "$C" merge-base origin/main "$1"; }
 
 pr_fixture() { # head-sha [title]
@@ -778,11 +779,18 @@ st = {"repo": "o/r", "issue": 7, "path": "PR", "requested_path": "PR", "interact
       "attempts": [{"sha": f"{k:040x}", "at": at} for k in range(1, (n_attempts if n_attempts is not None else len(rounds)) + 1)],
       "last_gate": {"status": status, "report_id": rounds[-1]["report_id"] if rounds else None,
                     "sha": rounds[-1]["sha"] if rounds else None, "at": at}}
+# #607 r1: the gate's latest read carries the two lines as well — the last round's, unless LAST_COV / LAST_REVW
+# (true or false) say the same report read again gave something else
+if rounds:
+    for key, env in (("coverage_complete", "LAST_COV"), ("reviewers_complete", "LAST_REVW")):
+        v = os.environ.get(env)
+        st["last_gate"][key] = rounds[-1].get(key) if v is None else v == "true"
 json.dump(st, open(path, "w"))
 EOF
 }
 next_run() { NX=$(python3 "$CS" next --cwd "$C" --repo $REPO --issue $N 2>"$S/err"); RC=$?; }
 nx() { printf '%s' "$NX" | field "$1"; }
+round_to_fix() { printf '%s' "$NX" | python3 -c 'import json,sys; print(" ".join(str(r["to_fix"]) for r in json.load(sys.stdin)["rounds"]))'; }
 rounds_len() { python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("rounds") or []))' "$C/.claude/.idd/state/idd-all-run-7.json"; }
 gate_run() { G=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")"); RC=$?; }
 
@@ -810,8 +818,10 @@ new_scenario stop-coverage-gap
 COV=false write_rounds exhaustive-blocking unattended no "0,2,0"; next_run
 assert_eq "exhaustive-blocking, 0 Blocking, coverage incomplete: fix" fix "$(nx decision)"
 assert_grep "… the reason names the coverage line" "coverage line" "$(nx reason)"
+assert_eq "… its to-fix count is 3 (the gap counts as one Blocking finding)" 3 "$(nx to_fix)"
 COV=false write_rounds early unattended no "0,1,1"; next_run
 assert_eq "early, nothing else to fix, coverage incomplete: fix" fix "$(nx decision)"
+assert_eq "… its to-fix count is 1" 1 "$(nx to_fix)"
 COV=false write_rounds exhaustive-all unattended no "0,0,0"; next_run
 assert_eq "exhaustive-all, no finding, coverage incomplete: fix" fix "$(nx decision)"
 COV=true write_rounds exhaustive-blocking unattended no "0,2,0;0,2,0"; next_run
@@ -820,9 +830,18 @@ assert_eq "… and merge" True "$(nx merge)"
 COV=false write_rounds exhaustive-blocking unattended no "1,0,0;1,0,0;0,0,0"; next_run
 assert_eq "exhaustive-blocking 1 → 1 → 0 with coverage incomplete (1 → 1 → 1): stop" stop "$(nx decision)"
 assert_eq "… without a merge" False "$(nx merge)"
+assert_grep "… the reason gives the counts with the gap" "(1 → 1 → 1)" "$(nx reason)"
+assert_eq "… each round's to-fix count" "1 1 1" "$(round_to_fix)"
 COV=false write_rounds early unattended no "0,1,0;0,0,0"; next_run
 assert_eq "early 1 → 1 (coverage gap counted): the count did not fall, stop" stop "$(nx decision)"
 assert_eq "… without a merge, the gap counts as Blocking" False "$(nx merge)"
+assert_grep "… the reason gives the counts with the gap" "(1 → 1)" "$(nx reason)"
+assert_eq "… each round's to-fix count" "1 1" "$(round_to_fix)"
+COV=false write_rounds none unattended no "0,2,0"; next_run
+assert_eq "no stop mode, coverage incomplete: the round's to-fix count stays 2 (#607 r1)" 2 "$(round_to_fix)"
+COV=true LAST_COV=false write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
+assert_eq "the same report read again with an incomplete coverage line: fix" fix "$(nx decision)"
+assert_grep "… the reason names the coverage line" "coverage line" "$(nx reason)"
 COV=none write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
 assert_eq "a round recorded before #607 (no coverage field): counted as incomplete" fix "$(nx decision)"
 
@@ -834,6 +853,35 @@ assert_eq "… without a merge" False "$(nx merge)"
 assert_grep "… the reason names the reviewers line" "reviewers line" "$(nx reason)"
 REVW=false write_rounds exhaustive-blocking unattended no "2,0,0"; next_run
 assert_eq "reviewers incomplete with Blocking left: fix as before" fix "$(nx decision)"
+REVW=true LAST_REVW=false write_rounds exhaustive-blocking unattended no "0,0,0"; next_run
+assert_eq "the same report read again with an incomplete reviewers line: stop" stop "$(nx decision)"
+assert_eq "… without a merge" False "$(nx merge)"
+
+# spec-example: idd-pr-hitl-modes / the gate carries the coverage and reviewers lines to next
+pr_scenario stop-gate-coverage; init_state PR PR no no unattended exhaustive-blocking
+rm -f "$S/gh/comments.json"; COVER="1 / 2" verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run; next_run
+assert_eq "gate reads 1 / 2 requirements addressed, 0 Blocking: next answers fix" fix "$(nx decision)"
+assert_grep "… naming the coverage line" "coverage line" "$(nx reason)"
+verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE" "" "## Verify: #7 — round 2"; gate_run; next_run
+assert_eq "round 2 reads a complete coverage line: stop" stop "$(nx decision)"
+assert_eq "… with a merge" True "$(nx merge)"
+pr_scenario stop-gate-reviewers; init_state PR PR no no unattended exhaustive-blocking
+rm -f "$S/gh/comments.json"; REVIEWERS="4 / 5" verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run; next_run
+assert_eq "gate reads 4 / 5 reviewers completed, 0 Blocking: stop" stop "$(nx decision)"
+assert_eq "… without a merge" False "$(nx merge)"
+assert_grep "… because the verify was degraded" "degraded verify" "$(nx reason)"
+pr_scenario stop-gate-reread; init_state PR PR no no unattended exhaustive-blocking
+rm -f "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$LEFT" "In-scope fix:a LOW leftover"; gate_run
+python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1]))
+for key in ("body", "body_html"):
+    cs[-1][key] = cs[-1][key].replace("1 / 1 requirements addressed", "1 / 2 requirements addressed")
+json.dump(cs, open(sys.argv[1], "w"))
+EOF
+gate_run; next_run
+assert_eq "the same report edited to 1 / 2 and read again: still one round" 1 "$(rounds_len)"
+assert_eq "… and next answers fix, not a merge" fix "$(nx decision)"
 
 # spec: exhaustive-blocking reaches zero Blocking
 new_scenario stop-exb-zero; write_rounds exhaustive-blocking unattended no "2,0,0;1,0,0;0,3,0"; next_run
