@@ -229,6 +229,21 @@ OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo 
   --gate-file "$GD/missing/../idd-all-gate-41.json" 2>&1)
 assert_eq "a path through a missing directory: no record" 0 "$(lines "$T/rec-g1.jsonl")"
 assert_grep "… and append says it cannot be read" "cannot be read" "$OUT"
+# #623 r6: what the path leads to is decided by one resolution and the guarded directory's identity, not by a second
+# lookup: a realpath that answers "the state directory" for a directory elsewhere must not let the record through
+OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 - "$LOG" "$T/g1" "$REPO" "$GA" "$T/elsewhere" "$GD" <<'EOF' 2>&1
+import importlib.util, os, sys
+log, cwd, repo, answer, elsewhere, state = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("sml", log); sml = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sml)
+real = os.path.realpath
+os.path.realpath = lambda p, *a, **k: real(state) if real(str(p)) == real(elsewhere) else real(p, *a, **k)
+sys.exit(sml.main(["append", "--cwd", cwd, "--repo", repo, "--issue", "41", "--answer", answer,
+                   "--gate-file", os.path.join(elsewhere, "idd-all-gate-41.json")]))
+EOF
+)
+assert_eq "a second lookup that disagrees with the first: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+assert_grep "… and append says it is not this issue's gate file" "is not this issue's gate file" "$OUT"
 rm -f "$GD/idd-all-gate-41.json"
 printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-42.json"
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
@@ -258,12 +273,28 @@ assert_eq "a FIFO at the gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
 assert_grep "… append does not wait on it and says it is not a regular file" "is not a regular file" "$OUT"
 rm -f "$GD/idd-all-gate-41.json"
 printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-41.json"
-python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o111)' "$T/g1/.claude"     # #623 r5: search-only ancestor
+# #623 r5: under an ancestor that cannot be listed, where the platform can open a directory for search only; r6:
+# elsewhere no record is written, and an account that lists it anyway (root) proves nothing either way
+SEARCH_OPEN=$(python3 -c 'import os; print("yes" if getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0) else "no")')
+python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o111)' "$T/g1/.claude"
+LISTED=no; ls "$T/g1/.claude" >/dev/null 2>&1 && LISTED=yes
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
   --gate-file "$GD/idd-all-gate-41.json" 2>&1)
 python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$T/g1/.claude"
-assert_eq "this issue's regular gate file, under an ancestor that cannot be listed: the record is written" 1 \
-  "$(lines "$T/rec-g1.jsonl")"
+if [ "$LISTED" = yes ]; then
+  assert_eq "an ancestor that cannot be listed: not tested (this account lists it anyway)" skipped skipped
+  OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+    --gate-file "$GD/idd-all-gate-41.json" 2>&1)
+  assert_eq "this issue's regular gate file: the record is written" 1 "$(lines "$T/rec-g1.jsonl")"
+elif [ "$SEARCH_OPEN" = yes ]; then
+  assert_eq "this issue's regular gate file, under an ancestor that cannot be listed: the record is written" 1 \
+    "$(lines "$T/rec-g1.jsonl")"
+else
+  assert_eq "under an ancestor that cannot be listed, without a search-only open: no record" 0 "$(lines "$T/rec-g1.jsonl")"
+  OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
+    --gate-file "$GD/idd-all-gate-41.json" 2>&1)
+  assert_eq "this issue's regular gate file: the record is written" 1 "$(lines "$T/rec-g1.jsonl")"
+fi
 
 # A plugin root whose close-stage.py prints a fixed answer when run, and is the real module when imported.
 ROOT="$T/root"; mkdir -p "$ROOT/scripts"

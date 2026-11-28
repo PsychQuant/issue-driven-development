@@ -77,22 +77,25 @@ def gate_answer(a):
         except Exception as exc:
             return None, f"the state directory cannot be used ({exc.__class__.__name__})"
         name = f"idd-all-gate-{a['--issue']}.json"
-        # #623 r3: the directory part resolved with every link in it followed, `..` after a link included; r4: by
-        # the system too, which realpath alone is not (`missing/..` would pass it)
-        part = os.path.dirname(a["--gate-file"]) or "."
-        try:
-            os.stat(part)
-        except OSError:
-            return None, f"the gate's answer file {shown} cannot be read"
-        if os.path.realpath(part) != here \
-                or os.path.basename(a["--gate-file"]) != name:
-            return None, f"the gate's answer file {shown} is not this issue's gate file in {json.dumps(here)}"
+        not_this = f"the gate's answer file {shown} is not this issue's gate file in {json.dumps(here)}"
+        if os.path.basename(a["--gate-file"]) != name:
+            return None, not_this
         try:
             # #623 r1: open the checked name in the checked directory, not the argument again (after a linked
             # component, `..` leads somewhere else than the string says); without blocking, so a FIFO there cannot
             # hold the open before its type is checked
             dfd = close_stage().open_state_dir(a["--cwd"])     # r2: no link anywhere on the way to it
             try:
+                # r3, r4, r6: the directory part, resolved once by the system with every link in it followed (`..`
+                # after a link, a missing directory), must be the guarded directory itself: compared by identity
+                part = os.path.dirname(a["--gate-file"]) or "."
+                try:
+                    given = os.stat(part)
+                except OSError:
+                    return None, f"the gate's answer file {shown} cannot be read"
+                mine = os.fstat(dfd)
+                if (given.st_dev, given.st_ino) != (mine.st_dev, mine.st_ino):
+                    return None, not_this
                 fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
                              dir_fd=dfd)
             finally:

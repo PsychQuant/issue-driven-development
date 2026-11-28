@@ -892,16 +892,27 @@ assert_eq "… and the previous answer is gone" no "$([ -e "$GF" ] && echo yes |
 # #623 r5: a value that reads like the flag is not the flag: `--repo --write-answer` is refused, nothing is cleared
 rm -f "$GF"; printf '{"old": true}\n' > "$GF"
 python3 "$CS" gate --cwd "$C" --issue $N --repo --write-answer yes --sha "$SHA" >/dev/null 2>&1
-assert_eq "a value that reads like --write-answer: the previous answer stays" yes "$([ -e "$GF" ] && echo yes || echo no)"
+assert_eq "a value that reads like --write-answer: the previous answer stays as it was" '{"old": true}' "$(cat "$GF" 2>/dev/null)"
 # … and --write-answer given twice with the same value still clears it
 rm -f "$GF"; printf '{"old": true}\n' > "$GF"
 python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "" --write-answer yes --write-answer yes >/dev/null 2>&1
 assert_eq "--write-answer twice with the same value: the previous answer is gone" no "$([ -e "$GF" ] && echo yes || echo no)"
-# #623 r5: an ancestor that can be passed through but not listed does not stop the gate
-python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o111)' "$(dirname "$C")"
+# #623 r5: an ancestor that can be passed through but not listed does not stop the gate where the platform can open
+# a directory for search only; r6: where it cannot, the gate warns and writes nothing, and an account that lists the
+# directory anyway (root) proves nothing either way
+SEARCH_OPEN=$(python3 -c 'import os; print("yes" if getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0) else "no")')
+rm -f "$GF"; python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o111)' "$(dirname "$C")"
+LISTED=no; ls "$(dirname "$C")" >/dev/null 2>&1 && LISTED=yes
 gate_write
 python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$(dirname "$C")"
-assert_eq "a search-only ancestor: the gate file is written" yes "$([ -f "$GF" ] && echo yes || echo no)"
+if [ "$LISTED" = yes ]; then
+  assert_eq "a search-only ancestor: not tested (this account lists the directory anyway)" skipped skipped
+elif [ "$SEARCH_OPEN" = yes ]; then
+  assert_eq "a search-only ancestor: the gate file is written" yes "$([ -f "$GF" ] && echo yes || echo no)"
+else
+  assert_eq "a search-only ancestor without a search-only open: no gate file" no "$([ -e "$GF" ] && echo yes || echo no)"
+  assert_grep "… and the gate warns" "answer was not written" "$(cat "$S/gerr")"
+fi
 # #623 r4: 0600 whatever the umask, also one that takes the owner's read away
 rm -f "$GF"; ( umask 477; IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" --write-answer yes >/dev/null 2>&1 )
 assert_eq "under umask 477 the gate file is still 600" 600 "$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$GF")"
