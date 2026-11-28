@@ -948,6 +948,15 @@ if how == "neither":
     def no_truncate(*a, **k):
         raise OSError(30, "read-only file system")
     os.ftruncate = no_truncate
+if how == "swapped":       # #623 r7: the unlink fails after another file was put at the name
+    def swap_then_refuse(path, *a, **k):
+        if gate_file(path):
+            with open("swap.tmp", "w") as fh:
+                fh.write('{"other": true}\n')
+            os.rename("swap.tmp", path)
+            raise PermissionError(13, "read-only directory")
+        return real_unlink(path, *a, **k)
+    os.unlink = swap_then_refuse
 out, err = io.StringIO(), io.StringIO()
 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     rc = cs.cmd_gate(["--cwd", cwd, "--repo", repo, "--issue", n, "--sha", sha, "--base", base, "--write-answer", "yes"])
@@ -971,6 +980,12 @@ printf '{"old": true}\n' > "$GF"
 G=$(gate_failing neither 2>"$S/gerr"); RC=$?
 assert_eq "neither removed nor emptied: same stdout" "$G0" "$G"
 assert_eq "… same exit code" "$RC0" "$RC"
+assert_grep "… and the warning says the previous answer may still be there" "may still be there" "$(cat "$S/gerr")"
+rm -f "$GF"; printf '{"old": true}\n' > "$GF"
+G=$(gate_failing swapped 2>"$S/gerr"); RC=$?
+assert_eq "another file put at the name before emptying: same stdout" "$G0" "$G"
+assert_eq "… same exit code" "$RC0" "$RC"
+assert_eq "… the other file is not emptied" '{"other": true}' "$(cat "$GF")"
 assert_grep "… and the warning says the previous answer may still be there" "may still be there" "$(cat "$S/gerr")"
 rm -f "$GF" "$S/twin"; printf '{"old": true}\n' > "$GF"; ln "$GF" "$S/twin"
 G=$(gate_failing no-unlink 2>"$S/gerr"); RC=$?

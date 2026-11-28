@@ -269,6 +269,8 @@ def clear_old_gate_answer(name):
         got = os.fstat(fd)
         if not stat.S_ISREG(got.st_mode) or got.st_nlink != 1:
             return f"{removing}; not emptied: it is not a regular file with one link"
+        if (got.st_dev, got.st_ino) != (st.st_dev, st.st_ino):     # #623 r7: another file put at the name meanwhile
+            return f"{removing}; not emptied: the file at that name changed"
         os.ftruncate(fd, 0)
         return None
     except OSError as exc:

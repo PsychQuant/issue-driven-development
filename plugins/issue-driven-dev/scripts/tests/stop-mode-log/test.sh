@@ -273,6 +273,27 @@ assert_eq "a FIFO at the gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
 assert_grep "… append does not wait on it and says it is not a regular file" "is not a regular file" "$OUT"
 rm -f "$GD/idd-all-gate-41.json"
 printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-41.json"
+# #623 r7: the read itself goes through the guarded directory: the gate file is opened by its fixed name relative to
+# a directory descriptor, never by the path given
+OUT=$(IDD_STOP_LOG="$T/rec-open.jsonl" python3 - "$LOG" "$T/g1" "$REPO" "$GA" "$GD/idd-all-gate-41.json" <<'EOF' 2>&1
+import importlib.util, os, sys
+log, cwd, repo, answer, path = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("sml", log); sml = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sml)
+seen, real_open = [], os.open
+def watched(p, flags, *a, **k):
+    if os.path.basename(str(p)) == "idd-all-gate-41.json":
+        seen.append((str(p), k.get("dir_fd")))
+    return real_open(p, flags, *a, **k)
+os.open = watched
+rc = sml.main(["append", "--cwd", cwd, "--repo", repo, "--issue", "41", "--answer", answer, "--gate-file", path])
+print("OPENS", seen)
+assert rc == 0 and seen and all(p == "idd-all-gate-41.json" and isinstance(fd, int) for p, fd in seen), seen
+print("BOUND")
+EOF
+)
+assert_grep "the gate file is opened by its fixed name relative to the guarded directory" "BOUND" "$OUT"
+rm -f "$T/rec-open.jsonl"
 # #623 r5: under an ancestor that cannot be listed, where the platform can open a directory for search only; r6:
 # elsewhere no record is written, and an account that lists it anyway (root) proves nothing either way
 SEARCH_OPEN=$(python3 -c 'import os; print("yes" if getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0) else "no")')

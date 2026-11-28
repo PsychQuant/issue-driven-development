@@ -1150,7 +1150,8 @@ GATE_BASE=(--base "$BASE_SHA")
 [ "$(jq -r 'if (.review or .in_chain) then "no" else "yes" end' "$CWD/.claude/.idd/state/idd-all-run-$N.json" 2>/dev/null)" = yes ] || GATE_BASE=()
 # #603 r3: the next block is another Bash call, which does not keep GATE_JSON; --write-answer yes leaves the answer
 # in .claude/.idd/state/idd-all-gate-$N.json for it, through the run state's guards (#623: a symbolic link is
-# refused, not followed; a failed write removes the old answer and only warns)
+# refused, not followed; after a failed write the gate tries to remove or empty the old answer and warns, saying so
+# when the old answer may still be there)
 GATE_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}" --write-answer yes)
 echo "→ verify gate (head $HEAD_SHA${GATE_BASE:+, range from $BASE_SHA}): $GATE_JSON"
 ```
