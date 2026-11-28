@@ -138,8 +138,12 @@ def open_state_dir(cwd):
     """#623 r2: the state directory as an open descriptor, each component of its path opened without following a
     symbolic link, so what is done relative to it cannot be sent elsewhere by a link put in after the check."""
     path = state_dir(cwd)
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(os.sep, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    # #623 r5: search permission is enough where the platform can open a directory for it (O_PATH on Linux, O_SEARCH
+    # on macOS), so an ancestor that can be passed through but not listed does not stop the gate; elsewhere every
+    # directory on the path has to be readable
+    search = getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0) or os.O_RDONLY
+    flags = search | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(os.sep, search | getattr(os, "O_DIRECTORY", 0))
     try:
         for part in path.split(os.sep):
             if part:
@@ -203,8 +207,8 @@ def write_gate_answer(cwd, n, result):
                 tmp = f"{name}.{secrets.token_hex(8)}.tmp"
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 try:
-                    os.fchmod(fd, 0o600)    # #623 r4: the umask must not take the owner's read away
-                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:     # r5: owns the descriptor before fchmod
+                        os.fchmod(fh.fileno(), 0o600)   # #623 r4: the umask must not take the owner's read away
                         fh.write(json.dumps(result, ensure_ascii=False) + "\n")
                     os.replace(tmp, name)
                 except BaseException:
@@ -523,11 +527,13 @@ def cmd_gate(argv):
             or a.get("--write-answer", "yes") != "yes":
         # #623 r4: refused arguments write no answer, but the previous round's must not be read as this one's. An
         # empty value makes parse() refuse the whole line, so the three flags this needs are read on their own.
+        # r5: in flag/value pairs, as parse() reads them, so a value is never taken for a flag; a flag given twice
+        # with the same value is one, with two values it is ambiguous and not used
         seen = {}
-        for i, flag in enumerate(argv[:-1]):
-            if flag in ("--cwd", "--issue", "--write-answer"):
-                seen.setdefault(flag, []).append(argv[i + 1])
-        one = {k: v[0] for k, v in seen.items() if len(v) == 1}
+        for i in range(0, len(argv) - 1, 2):
+            if argv[i] in ("--cwd", "--issue", "--write-answer"):
+                seen.setdefault(argv[i], set()).add(argv[i + 1])
+        one = {k: next(iter(v)) for k, v in seen.items() if len(v) == 1}
         if one.get("--write-answer") == "yes" and one.get("--cwd") and os.path.isdir(one["--cwd"]) \
                 and re.match(r"^[0-9]+$", one.get("--issue", "")):
             invalidate_gate_answer(one["--cwd"], one["--issue"])

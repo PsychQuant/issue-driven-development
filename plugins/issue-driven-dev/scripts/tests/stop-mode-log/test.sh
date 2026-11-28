@@ -258,9 +258,12 @@ assert_eq "a FIFO at the gate file: no record" 0 "$(lines "$T/rec-g1.jsonl")"
 assert_grep "… append does not wait on it and says it is not a regular file" "is not a regular file" "$OUT"
 rm -f "$GD/idd-all-gate-41.json"
 printf '%s\n' '{"status": "not_clean", "blocking": 0}' > "$GD/idd-all-gate-41.json"
+python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o111)' "$T/g1/.claude"     # #623 r5: search-only ancestor
 OUT=$(IDD_STOP_LOG="$T/rec-g1.jsonl" python3 "$LOG" append --cwd "$T/g1" --repo $REPO --issue 41 --answer "$GA" \
   --gate-file "$GD/idd-all-gate-41.json" 2>&1)
-assert_eq "this issue's regular gate file: the record is written" 1 "$(lines "$T/rec-g1.jsonl")"
+python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$T/g1/.claude"
+assert_eq "this issue's regular gate file, under an ancestor that cannot be listed: the record is written" 1 \
+  "$(lines "$T/rec-g1.jsonl")"
 
 # A plugin root whose close-stage.py prints a fixed answer when run, and is the real module when imported.
 ROOT="$T/root"; mkdir -p "$ROOT/scripts"

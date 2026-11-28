@@ -889,6 +889,19 @@ GB=$(python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "
 assert_eq "refused arguments with the flag: same stdout" "$GB0" "$GB"
 assert_eq "… same exit code" "$RCB0" "$RCB"
 assert_eq "… and the previous answer is gone" no "$([ -e "$GF" ] && echo yes || echo no)"
+# #623 r5: a value that reads like the flag is not the flag: `--repo --write-answer` is refused, nothing is cleared
+rm -f "$GF"; printf '{"old": true}\n' > "$GF"
+python3 "$CS" gate --cwd "$C" --issue $N --repo --write-answer yes --sha "$SHA" >/dev/null 2>&1
+assert_eq "a value that reads like --write-answer: the previous answer stays" yes "$([ -e "$GF" ] && echo yes || echo no)"
+# … and --write-answer given twice with the same value still clears it
+rm -f "$GF"; printf '{"old": true}\n' > "$GF"
+python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "" --write-answer yes --write-answer yes >/dev/null 2>&1
+assert_eq "--write-answer twice with the same value: the previous answer is gone" no "$([ -e "$GF" ] && echo yes || echo no)"
+# #623 r5: an ancestor that can be passed through but not listed does not stop the gate
+python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o111)' "$(dirname "$C")"
+gate_write
+python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$(dirname "$C")"
+assert_eq "a search-only ancestor: the gate file is written" yes "$([ -f "$GF" ] && echo yes || echo no)"
 # #623 r4: 0600 whatever the umask, also one that takes the owner's read away
 rm -f "$GF"; ( umask 477; IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" --write-answer yes >/dev/null 2>&1 )
 assert_eq "under umask 477 the gate file is still 600" 600 "$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$GF")"
